@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 質問・サポート
+    url: https://github.com/stphegia-org/intv-comp/discussions
+    about: 質問がある場合はこちらからお願いします（日本語でお書きください）
