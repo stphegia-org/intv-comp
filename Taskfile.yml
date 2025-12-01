@@ -1,0 +1,28 @@
+version: '3'
+
+tasks:
+  lint:
+    desc: 静的チェック
+    cmds:
+      - uv run ruff check .
+
+  typecheck:
+    desc: 型チェック
+    cmds:
+      - uv run mypy .
+
+  organize:
+    desc: コード整理
+    cmds:
+      - uv run ruff check --fix .
+
+  format:
+    desc: コードフォーマット
+    cmds:
+      - uv run ruff format .
+
+  check:
+    desc: 静的チェック＆型チェック（lint + typecheck）
+    cmds:
+      - task: lint
+      - task: typecheck
