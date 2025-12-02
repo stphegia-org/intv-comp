@@ -35,7 +35,10 @@ git cloneでプロジェクトをcloneしてきた後は仮想環境を作成し
 そのデータをgit管理してしまうとブランチを取得するたびにデータも取得してしまい容量を圧迫してしまいます。
 そのためGit LFS（Large File Storage）という機能を使います。　（Github公式の機能）
 
-- `git clone` した後１度だけ `git lfs install` を行って、ローカルリポジトリに **Git LFSを導入** して下さい。
+- `git clone` した後１度だけ
+  `git lfs install --skip-smudge --global`
+  を行って、ローカルリポジトリに **Git LFSを導入** して下さい。
+  ただし、初回の**git clone**では落ちてきます。
 - ブランチを取得してきたときはファイルポインタのみ取得されます。
   `git lfs pull` でファイルの実体を取得できます。
   なお、特定のファイルだけpullしたいときは以下のようなコマンドです。
