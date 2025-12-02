@@ -29,6 +29,18 @@ git cloneでプロジェクトをcloneしてきた後は仮想環境を作成し
 **作業する前は必ず仮想化の有効化を行って下さい！**
 `source .venv/bin/activete`
 
+## Git LFS のインストール
+
+解析で使用するデータが少し大きいです。
+そのデータをgit管理してしまうとブランチを取得するたびにデータも取得してしまい容量を圧迫してしまいます。
+そのためGit LFS（Large File Storage）という機能を使います。　（Github公式の機能）
+
+- `git clone` した後１度だけ `git lfs install` を行って、ローカルリポジトリに **Git LFSを導入** して下さい。
+- ブランチを取得してきたときはファイルポインタのみ取得されます。
+  `git lfs pull` でファイルの実態を取得できます。
+  なお、特定のファイルだけpullしたいときは以下のようなコマンドです。
+  `git lfs pull --include="data/raw/bill-of-lading_messages.csv"`
+
 ## commit前のチェック＆整形
 
 プログラムソースの一貫性を保つため
