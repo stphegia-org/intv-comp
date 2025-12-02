@@ -37,7 +37,7 @@ git cloneでプロジェクトをcloneしてきた後は仮想環境を作成し
 
 - `git clone` した後１度だけ `git lfs install` を行って、ローカルリポジトリに **Git LFSを導入** して下さい。
 - ブランチを取得してきたときはファイルポインタのみ取得されます。
-  `git lfs pull` でファイルの実態を取得できます。
+  `git lfs pull` でファイルの実体を取得できます。
   なお、特定のファイルだけpullしたいときは以下のようなコマンドです。
   `git lfs pull --include="data/raw/bill-of-lading_messages.csv"`
 
