@@ -28,10 +28,20 @@ ROLE_COL = "role"  # TODO: 実際のCSVの話者ロール列名に合わせて�
 TIMESTAMP_COL = "timestamp"  # TODO: 実際のCSVのタイムスタンプ列名に合わせて修正してください
 
 
+def _require_env_path(env_var: str) -> str:
+    """環境変数に設定されたパスを取得する。存在しない場合は例外を発生させる。"""
+    path = os.getenv(env_var)
+    if not path:
+        raise RuntimeError(
+            f"環境変数 {env_var} が設定されていません。.envファイルに設定してから再実行してください。"
+        )
+    return path
+
+
 # ===== デフォルトパス設定 =====
-DEFAULT_MESSAGES_PATH = Path(os.getenv("MESSAGES_CSV_PATH", "data/raw/bill-of-lading_messages.csv"))
-DEFAULT_SESSIONS_PATH = Path(os.getenv("SESSIONS_CSV_PATH", "data/raw/bill-of-lading_interview_sessions.csv"))
-DEFAULT_OUTPUT_PATH = Path(os.getenv("REPORT_OUTPUT_PATH", "output/report.md"))
+DEFAULT_MESSAGES_PATH = Path(_require_env_path("MESSAGES_CSV_PATH"))
+DEFAULT_SESSIONS_PATH = Path(_require_env_path("SESSIONS_CSV_PATH"))
+DEFAULT_OUTPUT_PATH = Path(_require_env_path("REPORT_OUTPUT_PATH"))
 
 
 def load_csv(path: Path) -> pd.DataFrame:
