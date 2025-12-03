@@ -12,5 +12,8 @@ wheels/
 # Environment files
 .env
 
+# Log files
+logs/
+
 # Generated data files
 data/convert/

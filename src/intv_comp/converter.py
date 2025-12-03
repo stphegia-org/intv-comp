@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+from intv_comp.logger import logger
+
 
 def convert_csv_to_json(
     csv_path: Path,
@@ -42,4 +44,4 @@ def convert_csv_to_json(
     except PermissionError:
         raise PermissionError(f"JSONファイルへの書き込み権限がありません: {json_path}")
 
-    print(f"変換完了: {len(data)}件のレコードを {json_path} に出力しました")
+    logger.info(f"変換完了: {len(data)}件のレコードを {json_path} に出力しました")

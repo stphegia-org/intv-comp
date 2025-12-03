@@ -3,10 +3,14 @@
 from pathlib import Path
 
 from intv_comp.converter import convert_csv_to_json
+from intv_comp.logger import setup_logger
 
 
 def main() -> None:
     """メイン処理: CSVをJSONに変換する."""
+    # ロガーの設定
+    setup_logger()
+
     # プロジェクトのルートディレクトリを取得
     project_root = Path(__file__).parent.parent.parent
 
