@@ -18,7 +18,7 @@ DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 
 
 def _require_api_key() -> str:
-    """環境変数に設定されたAPIキーを取得する。存在しない場合は例外を送出する。"""
+    """環境変数に設定されたAPIキーを取得する。存在しない場合は例外を発生させる。"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError(
