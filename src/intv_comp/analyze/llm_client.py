@@ -13,7 +13,6 @@ from openai import APIConnectionError, APIStatusError, AuthenticationError
 # .envファイルを読み込んでAPIキーやモデル名を環境変数に反映
 load_dotenv()
 
-# TODO: 必要に応じてデフォルトモデル名を修正してください
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 
 
@@ -53,13 +52,13 @@ class LLMClient:
                     {"role": "user", "content": user_prompt},
                 ],
             )
-        except AuthenticationError as exc:  # type: ignore[unreachable]
+        except AuthenticationError as exc:
             raise RuntimeError("OpenAIの認証に失敗しました。APIキーを確認してください。") from exc
-        except APIStatusError as exc:  # type: ignore[unreachable]
+        except APIStatusError as exc:
             raise RuntimeError(
                 f"OpenAI APIリクエストに失敗しました。status={exc.status_code} message={exc.message}"
             ) from exc
-        except APIConnectionError as exc:  # type: ignore[unreachable]
+        except APIConnectionError as exc:
             raise RuntimeError("OpenAI APIに接続できませんでした。ネットワークを確認してください。") from exc
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("OpenAI API呼び出し中に予期しないエラーが発生しました。") from exc

@@ -9,14 +9,13 @@ import argparse
 import os
 import random
 import re
-import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
 
 import pandas as pd
 from dotenv import load_dotenv
 
-from llm_client import DEFAULT_MODEL, LLMClient
+from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
 
 # .envファイルを読み込んで環境変数を反映
 load_dotenv()
@@ -68,7 +67,8 @@ def get_session_order(sessions_df: pd.DataFrame, messages_df: pd.DataFrame) -> L
         ids = sessions_df[SESSION_ID_COL].dropna().astype(str).tolist()
         return ids
     # セッション情報がない場合はメッセージ側のユニーク値で代替
-    return messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
+    ids = messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
+    return ids
 
 
 def select_session_ids(
@@ -182,6 +182,7 @@ def render_report(
 
 
 def parse_arguments() -> argparse.Namespace:
+    """コマンドライン引数を解析する。"""
     parser = argparse.ArgumentParser(description="AIインタビューログを分析してMarkdownレポートを生成します。")
     parser.add_argument(
         "--messages-file",
@@ -222,6 +223,7 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def main() -> None:
+    """メイン関数。"""
     args = parse_arguments()
     try:
         messages_df = load_csv(args.messages_file)
@@ -283,14 +285,14 @@ def main() -> None:
         print(f"レポートを出力しました: {args.output}")
     except FileNotFoundError as exc:
         print(str(exc))
-        sys.exit(1)
+        raise RuntimeError(str(exc)) from exc
     except RuntimeError as exc:
         print(str(exc))
-        sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(str(exc)) from exc
+    except Exception as exc:
         print("予期しないエラーが発生しました。入力データやAPI設定を確認してください。")
         print(str(exc))
-        sys.exit(1)
+        raise RuntimeError(str(exc)) from exc
 
 
 if __name__ == "__main__":

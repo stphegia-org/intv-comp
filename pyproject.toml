@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "mypy>=1.19.0",
     "ruff>=0.14.7",
+    "pandas-stubs>=2.2.0",
 ]
 
 [tool.commitizen]
@@ -46,3 +47,6 @@ strict = true
 
 # サードパーティライブラリが型情報を持たないとき無視
 ignore_missing_imports = true
+
+# Exceptionをキャッチすることに対する警告を無効化
+disable_error_code = ["catch-base"]
