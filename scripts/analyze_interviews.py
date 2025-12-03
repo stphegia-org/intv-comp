@@ -17,10 +17,10 @@ import pandas as pd
 from llm_client import DEFAULT_MODEL, LLMClient
 
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
-SESSION_ID_COL = "session_id"  # TODO: 実際のCSVのセッションID列名に合わせて修正してください
-MESSAGE_TEXT_COL = "message"  # TODO: 実際のCSVのメッセージ本文列名に合わせて修正してください
-ROLE_COL = "role"  # TODO: 実際のCSVの話者ロール列名に合わせて修正してください
-TIMESTAMP_COL = "timestamp"  # TODO: 実際のCSVのタイムスタンプ列名に合わせて修正してください
+SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
+MESSAGE_TEXT_COL = "content"  # メッセージCSVのメッセージ本文列名
+ROLE_COL = "role"  # メッセージCSVの話者ロール列名
+TIMESTAMP_COL = "timestamp"  # メッセージCSVのタイムスタンプ列名
 
 
 # ===== デフォルトパス設定 =====
