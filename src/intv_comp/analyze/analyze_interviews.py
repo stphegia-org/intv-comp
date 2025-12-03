@@ -21,9 +21,6 @@ from intv_comp.logger import logger, setup_logger
 # .envファイルを読み込んで環境変数を反映
 load_dotenv()
 
-# ロガーの設定
-setup_logger()
-
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
 SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
 MESSAGE_CONTENT_COL = "content"  # メッセージCSVのメッセージ本文列名
@@ -228,6 +225,9 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     """メイン関数。"""
+    # ロガーの設定
+    setup_logger()
+
     args = parse_arguments()
     try:
         messages_df = load_csv(args.messages_file)
