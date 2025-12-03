@@ -29,7 +29,7 @@ TIMESTAMP_COL = "timestamp"  # TODO: 実際のCSVのタイムスタンプ列名�
 
 
 def _get_env_var(env_var: str) -> str:
-    """環境変数に設定されたパスを取得する。存在しない場合は例外を発生させる。"""
+    """環境変数を取得する。存在しない場合は例外を発生させる。"""
     path = os.getenv(env_var)
     if not path or not path.strip():
         raise RuntimeError(
