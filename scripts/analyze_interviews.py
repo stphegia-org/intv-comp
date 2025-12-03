@@ -18,7 +18,7 @@ from llm_client import DEFAULT_MODEL, LLMClient
 
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
 SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
-CONTENT_COL = "content"  # メッセージCSVのメッセージ本文列名
+MESSAGE_CONTENT_COL = "content"  # メッセージCSVのメッセージ本文列名
 ROLE_COL = "role"  # メッセージCSVの話者ロール列名
 TIMESTAMP_COL = "timestamp"  # メッセージCSVのタイムスタンプ列名
 
@@ -85,7 +85,7 @@ def build_session_transcript(session_df: pd.DataFrame) -> str:
     for _, row in session_df.iterrows():
         timestamp = row.get(TIMESTAMP_COL, "")
         role = row.get(ROLE_COL, "")
-        message = row.get(CONTENT_COL, "")
+        message = row.get(MESSAGE_CONTENT_COL, "")
         lines.append(f"[{timestamp}] {role}: {message}")
     return "\n".join(lines)
 
@@ -214,7 +214,7 @@ def main() -> None:
 
         validate_required_columns(
             messages_df,
-            [SESSION_ID_COL, CONTENT_COL, ROLE_COL, TIMESTAMP_COL],
+            [SESSION_ID_COL, MESSAGE_CONTENT_COL, ROLE_COL, TIMESTAMP_COL],
             "メッセージCSV",
         )
 
