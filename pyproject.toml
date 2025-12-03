@@ -49,4 +49,3 @@ strict = true
 ignore_missing_imports = true
 
 # Exceptionをキャッチすることに対する警告を無効化
-disable_error_code = ["catch-base"]
