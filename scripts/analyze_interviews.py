@@ -6,6 +6,7 @@ AIインタビューログのCSVを読み込み、セッション単位でLLMに
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import re
 import sys
@@ -13,8 +14,12 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from llm_client import DEFAULT_MODEL, LLMClient
+
+# .envファイルを読み込んで環境変数を反映
+load_dotenv()
 
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
 SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
@@ -23,10 +28,20 @@ ROLE_COL = "role"  # メッセージCSVの話者ロール列名
 TIMESTAMP_COL = "timestamp"  # メッセージCSVのタイムスタンプ列名
 
 
+def _get_env_var(env_var: str) -> str:
+    """環境変数を取得する。存在しない場合は例外を発生させる。"""
+    path = os.getenv(env_var)
+    if not path or not path.strip():
+        raise RuntimeError(
+            f"環境変数 {env_var} が設定されていません。.envファイルに設定してから再実行してください。"
+        )
+    return path.strip()
+
+
 # ===== デフォルトパス設定 =====
-DEFAULT_MESSAGES_PATH = Path("data/raw/bill-of-lading_messages.csv")
-DEFAULT_SESSIONS_PATH = Path("data/raw/bill-of-lading_interview_sessions.csv")
-DEFAULT_OUTPUT_PATH = Path("output/report.md")
+DEFAULT_MESSAGES_PATH = Path(_get_env_var("MESSAGES_CSV_PATH"))
+DEFAULT_SESSIONS_PATH = Path(_get_env_var("SESSIONS_CSV_PATH"))
+DEFAULT_OUTPUT_PATH = Path(_get_env_var("REPORT_OUTPUT_PATH"))
 
 
 def load_csv(path: Path) -> pd.DataFrame:
