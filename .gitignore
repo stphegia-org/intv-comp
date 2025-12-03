@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
+# Environment files
+.env
+
 # Generated data files
 data/convert/

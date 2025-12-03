@@ -6,6 +6,7 @@ AIインタビューログのCSVを読み込み、セッション単位でLLMに
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import re
 import sys
@@ -13,8 +14,12 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from llm_client import DEFAULT_MODEL, LLMClient
+
+# .envファイルを読み込んで環境変数を反映
+load_dotenv()
 
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
 SESSION_ID_COL = "session_id"  # TODO: 実際のCSVのセッションID列名に合わせて修正してください
@@ -24,9 +29,9 @@ TIMESTAMP_COL = "timestamp"  # TODO: 実際のCSVのタイムスタンプ列名�
 
 
 # ===== デフォルトパス設定 =====
-DEFAULT_MESSAGES_PATH = Path("data/raw/bill-of-lading_messages.csv")
-DEFAULT_SESSIONS_PATH = Path("data/raw/bill-of-lading_interview_sessions.csv")
-DEFAULT_OUTPUT_PATH = Path("output/report.md")
+DEFAULT_MESSAGES_PATH = Path(os.getenv("MESSAGES_CSV_PATH", "data/raw/bill-of-lading_messages.csv"))
+DEFAULT_SESSIONS_PATH = Path(os.getenv("SESSIONS_CSV_PATH", "data/raw/bill-of-lading_interview_sessions.csv"))
+DEFAULT_OUTPUT_PATH = Path(os.getenv("REPORT_OUTPUT_PATH", "output/report.md"))
 
 
 def load_csv(path: Path) -> pd.DataFrame:
