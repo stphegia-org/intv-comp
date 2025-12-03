@@ -16,9 +16,13 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
+from intv_comp.logger import logger, setup_logger
 
 # .envファイルを読み込んで環境変数を反映
 load_dotenv()
+
+# ロガーの設定
+setup_logger()
 
 # ===== CSV列名の定義（実際のデータに合わせて修正してください） =====
 SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
@@ -282,16 +286,16 @@ def main() -> None:
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
-        print(f"レポートを出力しました: {args.output}")
+        logger.info(f"レポートを出力しました: {args.output}")
     except FileNotFoundError as exc:
-        print(str(exc))
+        logger.error(str(exc))
         raise RuntimeError(str(exc)) from exc
     except RuntimeError as exc:
-        print(str(exc))
+        logger.error(str(exc))
         raise RuntimeError(str(exc)) from exc
     except Exception as exc:
-        print("予期しないエラーが発生しました。入力データやAPI設定を確認してください。")
-        print(str(exc))
+        logger.error("予期しないエラーが発生しました。入力データやAPI設定を確認してください。")
+        logger.error(str(exc))
         raise RuntimeError(str(exc)) from exc
 
 
