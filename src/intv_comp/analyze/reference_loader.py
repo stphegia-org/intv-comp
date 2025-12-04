@@ -133,7 +133,7 @@ def _extract_text_from_image(file_path: Path) -> str:
     
     try:
         image = Image.open(file_path)
-        text = str(pytesseract.image_to_string(image, lang='jpn+eng'))
+        text = pytesseract.image_to_string(image, lang='jpn+eng')  # type: ignore[no-any-return]
         return text.strip()
     except Exception as exc:
         logger.warning(f"画像OCR処理エラー: {file_path.name} - {exc}")
