@@ -277,6 +277,10 @@ def main() -> None:
 
     args = parse_arguments()
     try:
+        # 参照ディレクトリのパス検証
+        if args.references_dir.is_absolute():
+            logger.warning("絶対パスが指定されました。相対パスの使用を推奨します。")
+
         messages_df = load_csv(args.messages_file)
         sessions_df = load_csv(args.sessions_file)
 
@@ -295,6 +299,16 @@ def main() -> None:
 
         # 追加資料を読み込む
         reference_materials = load_reference_materials(args.references_dir)
+        
+        # トークン使用量の警告
+        if reference_materials:
+            # 概算: 1トークン ≒ 4文字（日本語/英語混在）
+            estimated_tokens = len(reference_materials) // 4
+            if estimated_tokens > 10000:
+                logger.warning(
+                    f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
+                    f"この資料は各セッション分析とクロスセッション分析で繰り返し送信されます。"
+                )
 
         llm = LLMClient(model=args.model)
 
