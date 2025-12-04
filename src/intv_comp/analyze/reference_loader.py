@@ -112,7 +112,7 @@ def _extract_text_from_pptx(file_path: Path) -> str:
         return ""
     
     try:
-        prs = Presentation(str(file_path))
+        prs = Presentation(file_path)
         text_parts = []
         for slide_num, slide in enumerate(prs.slides, 1):
             slide_texts = []
