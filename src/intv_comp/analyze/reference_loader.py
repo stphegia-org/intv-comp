@@ -39,8 +39,10 @@ except ImportError:
 try:
     from PIL import Image
     import pytesseract
+    # Verify tesseract is actually available
+    pytesseract.get_tesseract_version()
     HAS_OCR = True
-except ImportError:
+except (ImportError, pytesseract.TesseractNotFoundError):
     HAS_OCR = False
 
 
