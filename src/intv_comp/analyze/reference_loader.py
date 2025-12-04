@@ -6,6 +6,7 @@ LLMに提供するための機能を提供する。
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import List
 
@@ -42,7 +43,10 @@ try:
     # Verify tesseract is actually available
     pytesseract.get_tesseract_version()
     HAS_OCR = True
-except (ImportError, pytesseract.TesseractNotFoundError):
+except ImportError:
+    HAS_OCR = False
+except Exception:
+    # Catch any other exception (e.g., TesseractNotFoundError)
     HAS_OCR = False
 
 
@@ -136,7 +140,7 @@ def _extract_text_from_image(file_path: Path) -> str:
     try:
         image = Image.open(file_path)
         text = pytesseract.image_to_string(image, lang='jpn+eng')
-        return text.strip()
+        return str(text).strip()
     except Exception as exc:
         logger.warning(f"画像OCR処理エラー: {file_path.name} - {exc}")
         return ""
@@ -159,6 +163,9 @@ def load_reference_materials(references_dir: Path) -> str:
     if not references_dir.is_dir():
         logger.warning(f"指定されたパスはディレクトリではありません: {references_dir}")
         return ""
+
+    # 最大ファイルサイズを環境変数から取得（デフォルト: 30MB）
+    max_file_size = int(os.getenv("MAX_REFERENCE_FILE_SIZE", "31457280"))
 
     # サポートされる拡張子と対応する抽出関数
     file_processors = {
@@ -186,6 +193,15 @@ def load_reference_materials(references_dir: Path) -> str:
     materials: List[str] = []
     for file_path in sorted(reference_files):
         try:
+            # ファイルサイズをチェック
+            file_size = file_path.stat().st_size
+            if file_size > max_file_size:
+                logger.warning(
+                    f"ファイルサイズが大きすぎます（{file_size / 1024 / 1024:.1f}MB > "
+                    f"{max_file_size / 1024 / 1024:.1f}MB）: {file_path.name}"
+                )
+                continue
+
             ext = file_path.suffix.lower()
             processor = file_processors.get(ext)
             
