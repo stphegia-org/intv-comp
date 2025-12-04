@@ -72,7 +72,7 @@ def _extract_text_from_docx(file_path: Path) -> str:
         return ""
     
     try:
-        doc = Document(str(file_path))
+        doc = Document(file_path)
         paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
         return "\n\n".join(paragraphs)
     except Exception as exc:
