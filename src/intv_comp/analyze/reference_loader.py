@@ -49,7 +49,7 @@ def load_reference_materials(references_dir: Path) -> str:
             content = file_path.read_text(encoding="utf-8")
             materials.append(f"# {file_path.name}\n\n{content}")
             logger.info(f"追加資料を読み込みました: {file_path.name}")
-        except Exception as exc:
+        except (UnicodeDecodeError, OSError, PermissionError) as exc:
             logger.warning(f"資料の読み込みに失敗しました: {file_path.name} - {exc}")
             continue
 
