@@ -137,6 +137,11 @@ def build_session_prompt(session_id: str, transcript: str, reference_materials: 
 - 追加で調査すべき事項や確認が必要な前提
 
 出力は「## セッション {session_id}」配下に箇条書きを含む読みやすいMarkdownで記載してください。
+
+---
+## インタビューログ
+
+{transcript}
 """
 
     if reference_materials:
@@ -144,24 +149,18 @@ def build_session_prompt(session_id: str, transcript: str, reference_materials: 
 ---
 ## 参考資料
 
-以下の追加資料も参考にしてください：
+以下の追加資料も分析の参考にしてください：
 
 {reference_materials}
 """
 
-    base_prompt += f"""
----
-## インタビューログ
-
-{transcript}
-"""
     return base_prompt
 
 
 def build_cross_session_prompt(per_session_summaries: List[str], reference_materials: str = "") -> str:
     """複数セッションを俯瞰して共通論点や示唆を抽出するプロンプトを生成する。"""
     joined = "\n\n".join(per_session_summaries)
-    base_prompt = """
+    base_prompt = f"""
 以下は各セッションの分析結果です。全体を俯瞰し、共通するパターンや見落とされがちな論点を抽出してください。
 結果は以下の3セクションを日本語Markdownで生成してください。
 
@@ -174,6 +173,11 @@ def build_cross_session_prompt(per_session_summaries: List[str], reference_mater
 [suggestions]
 - 改善提案・追加で検討すべき示唆
 [/suggestions]
+
+---
+## セッション分析結果
+
+{joined}
 """
 
     if reference_materials:
@@ -181,17 +185,11 @@ def build_cross_session_prompt(per_session_summaries: List[str], reference_mater
 ---
 ## 参考資料
 
-以下の追加資料も参考にしてください：
+以下の追加資料も分析の参考にしてください：
 
 {reference_materials}
 """
 
-    base_prompt += f"""
----
-## セッション分析結果
-
-{joined}
-"""
     return base_prompt
 
 
