@@ -199,7 +199,7 @@ def load_reference_materials(references_dir: Path) -> str:
                 logger.info(f"追加資料を読み込みました: {file_path.name}")
             else:
                 logger.warning(f"ファイルからテキストを抽出できませんでした: {file_path.name}")
-        except (UnicodeDecodeError, OSError, PermissionError) as exc:
+        except (OSError, PermissionError) as exc:
             logger.warning(f"資料の読み込みに失敗しました: {file_path.name} - {exc}")
             continue
 
