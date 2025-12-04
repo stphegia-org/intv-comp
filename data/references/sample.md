@@ -16,6 +16,6 @@
 
 ## 注意事項
 
-- 資料はテキストファイル（.txt）またはMarkdownファイル（.md）形式で保存してください
+- 資料は以下のファイル形式で保存できます: テキスト（.txt）、Markdown（.md）、PDF（.pdf）、Word（.docx）、Excel（.xlsx）、PowerPoint（.pptx）、画像（.jpg, .jpeg, .png）など。最新の対応形式はREADME.mdをご参照ください。
 - UTF-8エンコーディングを使用してください
 - ファイルサイズが大きすぎるとLLMのトークン制限に影響する可能性があります
