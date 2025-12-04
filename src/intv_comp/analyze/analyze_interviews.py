@@ -15,6 +15,12 @@ from typing import Dict, List, Sequence
 import pandas as pd
 from dotenv import load_dotenv
 
+try:
+    import tiktoken
+    HAS_TIKTOKEN = True
+except ImportError:
+    HAS_TIKTOKEN = False
+
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
 from intv_comp.analyze.reference_loader import load_reference_materials
 from intv_comp.logger import logger, setup_logger
@@ -302,8 +308,23 @@ def main() -> None:
         
         # トークン使用量の警告
         if reference_materials:
-            # 概算: 1トークン ≒ 4文字（日本語/英語混在）
-            estimated_tokens = len(reference_materials) // 4
+            if HAS_TIKTOKEN:
+                try:
+                    # tiktokenを使用して正確なトークン数を計算
+                    encoding = tiktoken.encoding_for_model(args.model)
+                    estimated_tokens = len(encoding.encode(reference_materials))
+                except Exception:
+                    # モデル名が不明な場合はcl100k_baseを使用
+                    try:
+                        encoding = tiktoken.get_encoding("cl100k_base")
+                        estimated_tokens = len(encoding.encode(reference_materials))
+                    except Exception:
+                        # tiktokenが使用できない場合は概算
+                        estimated_tokens = len(reference_materials) // 4
+            else:
+                # tiktokenがインストールされていない場合は概算
+                estimated_tokens = len(reference_materials) // 4
+            
             if estimated_tokens > 10000:
                 logger.warning(
                     f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
