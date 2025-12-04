@@ -165,8 +165,11 @@ def load_reference_materials(references_dir: Path) -> str:
         return ""
 
     # 最大ファイルサイズを環境変数から取得（デフォルト: 30MB）
-    max_file_size = int(os.getenv("MAX_REFERENCE_FILE_SIZE", "31457280"))
-
+    try:
+        max_file_size = int(os.getenv("MAX_REFERENCE_FILE_SIZE", "31457280"))
+    except ValueError:
+        logger.warning("MAX_REFERENCE_FILE_SIZE is not a valid integer, using default 30MB")
+        max_file_size = 31457280
     # サポートされる拡張子と対応する抽出関数
     file_processors = {
         ".txt": lambda p: p.read_text(encoding="utf-8"),
