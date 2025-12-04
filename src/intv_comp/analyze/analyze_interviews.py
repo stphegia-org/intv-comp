@@ -15,7 +15,14 @@ from typing import Dict, List, Sequence
 import pandas as pd
 from dotenv import load_dotenv
 
+try:
+    import tiktoken
+    HAS_TIKTOKEN = True
+except ImportError:
+    HAS_TIKTOKEN = False
+
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
+from intv_comp.analyze.reference_loader import load_reference_materials
 from intv_comp.logger import logger, setup_logger
 
 # .envファイルを読み込んで環境変数を反映
@@ -42,6 +49,18 @@ def _get_env_var(env_var: str) -> str:
 DEFAULT_MESSAGES_PATH = Path(_get_env_var("MESSAGES_CSV_PATH"))
 DEFAULT_SESSIONS_PATH = Path(_get_env_var("SESSIONS_CSV_PATH"))
 DEFAULT_OUTPUT_PATH = Path(_get_env_var("REPORT_OUTPUT_PATH"))
+
+
+def _get_env_var_optional(env_var: str, default: str) -> str:
+    """環境変数を取得する。存在しない場合はデフォルト値を返す。"""
+    value = os.getenv(env_var)
+    if not value or not value.strip():
+        return default
+    return value.strip()
+
+
+# デフォルトの追加資料ディレクトリ
+DEFAULT_REFERENCES_DIR = Path(_get_env_var_optional("REFERENCES_DIR", "data/references"))
 
 
 def load_csv(path: Path) -> pd.DataFrame:
@@ -106,9 +125,9 @@ def build_session_transcript(session_df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def build_session_prompt(session_id: str, transcript: str) -> str:
+def build_session_prompt(session_id: str, transcript: str, reference_materials: str = "") -> str:
     """セッション単位の分析を行うためのユーザープロンプトを生成する。"""
-    prompt = f"""
+    base_prompt = f"""
 以下はインタビューセッションID: {session_id} の全文ログです。テキストを読み込み、以下をMarkdownでまとめてください。
 
 - インタビュー対象者の主な主張・懸念点
@@ -120,15 +139,28 @@ def build_session_prompt(session_id: str, transcript: str) -> str:
 出力は「## セッション {session_id}」配下に箇条書きを含む読みやすいMarkdownで記載してください。
 
 ---
+## インタビューログ
+
 {transcript}
 """
-    return prompt
+
+    if reference_materials:
+        base_prompt += f"""
+---
+## 参考資料
+
+以下の追加資料も分析の参考にしてください：
+
+{reference_materials}
+"""
+
+    return base_prompt
 
 
-def build_cross_session_prompt(per_session_summaries: List[str]) -> str:
+def build_cross_session_prompt(per_session_summaries: List[str], reference_materials: str = "") -> str:
     """複数セッションを俯瞰して共通論点や示唆を抽出するプロンプトを生成する。"""
     joined = "\n\n".join(per_session_summaries)
-    prompt = f"""
+    base_prompt = f"""
 以下は各セッションの分析結果です。全体を俯瞰し、共通するパターンや見落とされがちな論点を抽出してください。
 結果は以下の3セクションを日本語Markdownで生成してください。
 
@@ -143,9 +175,22 @@ def build_cross_session_prompt(per_session_summaries: List[str]) -> str:
 [/suggestions]
 
 ---
+## セッション分析結果
+
 {joined}
 """
-    return prompt
+
+    if reference_materials:
+        base_prompt += f"""
+---
+## 参考資料
+
+以下の追加資料も分析の参考にしてください：
+
+{reference_materials}
+"""
+
+    return base_prompt
 
 
 def extract_tagged_section(text: str, tag: str) -> str:
@@ -220,6 +265,12 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_MODEL,
         help="使用するOpenAIモデル名",
     )
+    parser.add_argument(
+        "--references-dir",
+        type=Path,
+        default=DEFAULT_REFERENCES_DIR,
+        help="追加資料（参考資料）が格納されているディレクトリのパス",
+    )
     return parser.parse_args()
 
 
@@ -230,6 +281,10 @@ def main() -> None:
 
     args = parse_arguments()
     try:
+        # 参照ディレクトリのパス検証
+        if args.references_dir.is_absolute():
+            logger.warning("絶対パスが指定されました。相対パスの使用を推奨します。")
+
         messages_df = load_csv(args.messages_file)
         sessions_df = load_csv(args.sessions_file)
 
@@ -246,6 +301,34 @@ def main() -> None:
         if not selected_ids:
             raise RuntimeError("分析対象のセッションが見つかりませんでした。CSVの内容を確認してください。")
 
+        # 追加資料を読み込む
+        reference_materials = load_reference_materials(args.references_dir)
+        
+        # トークン使用量の警告
+        if reference_materials:
+            if HAS_TIKTOKEN:
+                try:
+                    # tiktokenを使用して正確なトークン数を計算
+                    encoding = tiktoken.encoding_for_model(args.model)
+                    estimated_tokens = len(encoding.encode(reference_materials))
+                except Exception:
+                    # モデル名が不明な場合はcl100k_baseを使用
+                    try:
+                        encoding = tiktoken.get_encoding("cl100k_base")
+                        estimated_tokens = len(encoding.encode(reference_materials))
+                    except Exception:
+                        # tiktokenが使用できない場合は概算
+                        estimated_tokens = len(reference_materials) // 4
+            else:
+                # tiktokenがインストールされていない場合は概算
+                estimated_tokens = len(reference_materials) // 4
+            
+            if estimated_tokens > 10000:
+                logger.warning(
+                    f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
+                    f"この資料は各セッション分析とクロスセッション分析で繰り返し送信されます。"
+                )
+
         llm = LLMClient(model=args.model)
 
         per_session_results: List[str] = []
@@ -254,7 +337,7 @@ def main() -> None:
             if session_df is None:
                 continue
             transcript = build_session_transcript(session_df)
-            user_prompt = build_session_prompt(str(session_id), transcript)
+            user_prompt = build_session_prompt(str(session_id), transcript, reference_materials)
             session_analysis = llm.chat_completion(
                 system_prompt=(
                     "あなたはリーガルテック領域の調査アナリストです。"
@@ -264,7 +347,7 @@ def main() -> None:
             )
             per_session_results.append(session_analysis)
 
-        cross_prompt = build_cross_session_prompt(per_session_results)
+        cross_prompt = build_cross_session_prompt(per_session_results, reference_materials)
         cross_response = llm.chat_completion(
             system_prompt=(
                 "あなたは政策立案担当者向けに論点を整理する専門家です。"
