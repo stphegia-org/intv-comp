@@ -186,7 +186,7 @@ def load_reference_materials(references_dir: Path) -> str:
     # ファイルを収集
     reference_files: List[Path] = []
     for ext in file_processors.keys():
-        reference_files.extend(references_dir.glob(f"*{ext}"))
+        reference_files.extend(references_dir.rglob(f"*{ext}"))
 
     if not reference_files:
         logger.info(f"追加資料が見つかりませんでした: {references_dir}")
