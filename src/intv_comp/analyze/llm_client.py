@@ -46,7 +46,7 @@ class LLMClient:
         """system/userプロンプトを渡してモデルの応答文字列を返す。"""
         try:
             logger.info(
-                "OpenAI API呼び出し開始: model=%s, temperature=%s, max_tokens=%s",
+                "OpenAI API呼び出し開始: model={}, temperature={}, max_tokens={}",
                 self.model,
                 temperature,
                 max_tokens,
@@ -61,7 +61,7 @@ class LLMClient:
                 ],
             )
             logger.info(
-                "OpenAI API呼び出し完了: model=%s, temperature=%s, max_tokens=%s",
+                "OpenAI API呼び出し完了: model={}, temperature={}, max_tokens={}",
                 self.model,
                 temperature,
                 max_tokens,
@@ -71,7 +71,7 @@ class LLMClient:
             raise RuntimeError("OpenAIの認証に失敗しました。APIキーを確認してください。") from exc
         except APIStatusError as exc:
             logger.error(
-                "OpenAI APIリクエストに失敗しました。status=%s message=%s",
+                "OpenAI APIリクエストに失敗しました。status={} message={}",
                 exc.status_code,
                 exc.message,
                 exc_info=True,
