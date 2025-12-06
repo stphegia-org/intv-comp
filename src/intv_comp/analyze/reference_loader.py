@@ -19,6 +19,7 @@ try:
     HAS_PDF = True
 except ImportError:
     HAS_PDF = False
+    PdfReadError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from docx import Document
@@ -26,6 +27,7 @@ try:
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
+    DocxPackageNotFoundError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from openpyxl import load_workbook
@@ -33,6 +35,7 @@ try:
     HAS_XLSX = True
 except ImportError:
     HAS_XLSX = False
+    InvalidFileException = Exception  # Fallback for exception handling
 
 try:
     from pptx import Presentation
@@ -40,6 +43,7 @@ try:
     HAS_PPTX = True
 except ImportError:
     HAS_PPTX = False
+    PptxPackageNotFoundError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from PIL import Image
@@ -50,9 +54,14 @@ try:
     HAS_OCR = True
 except ImportError:
     HAS_OCR = False
-except (TesseractNotFoundError, TesseractError, OSError):
+    TesseractNotFoundError = Exception  # Fallback for exception handling
+    TesseractError = Exception  # Fallback for exception handling
+except Exception:
     # Catch Tesseract-specific exceptions and OS errors
+    # (TesseractNotFoundError, TesseractError, OSError)
     HAS_OCR = False
+    TesseractNotFoundError = Exception  # Fallback for exception handling
+    TesseractError = Exception  # Fallback for exception handling
 
 
 def _extract_text_from_pdf(file_path: Path) -> str:
