@@ -124,7 +124,6 @@ def _extract_text_from_xlsx(file_path: Path) -> str:
     except InvalidFileException as exc:
         # xlsx ではない / 壊れているなど
         logger.warning("Excel読み込みエラー(不正なExcelファイル): %s - %s", file_path.name, exc)
-
     except OSError as exc:
         # ファイルアクセス系エラー
         logger.warning("Excelファイルアクセスエラー: %s - %s", file_path.name, exc)
@@ -153,7 +152,6 @@ def _extract_text_from_pptx(file_path: Path) -> str:
     except PptxPackageNotFoundError as exc:
         # pptx が壊れている / pptx ではない場合
         logger.warning("PowerPoint読み込みエラー(不正なファイル): %s - %s", file_path.name, exc)
-
     except OSError as exc:
         # I/O、権限などのファイルアクセスエラー
         logger.warning("PowerPointファイルアクセスエラー: %s - %s", file_path.name, exc)
