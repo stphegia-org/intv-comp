@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from openai import APIConnectionError, APIStatusError, AuthenticationError
 
+from intv_comp.logger import logger
+
 # .envファイルを読み込んでAPIキーやモデル名を環境変数に反映
 load_dotenv()
 
@@ -43,6 +45,12 @@ class LLMClient:
     ) -> str:
         """system/userプロンプトを渡してモデルの応答文字列を返す。"""
         try:
+            logger.info(
+                "OpenAI API呼び出し開始: model=%s, temperature=%s, max_tokens=%s",
+                self.model,
+                temperature,
+                max_tokens,
+            )
             response = self.client.chat.completions.create(
                 model=self.model,
                 temperature=temperature,
@@ -52,15 +60,30 @@ class LLMClient:
                     {"role": "user", "content": user_prompt},
                 ],
             )
+            logger.info(
+                "OpenAI API呼び出し完了: model=%s, temperature=%s, max_tokens=%s",
+                self.model,
+                temperature,
+                max_tokens,
+            )
         except AuthenticationError as exc:
+            logger.error("OpenAIの認証に失敗しました。APIキーを確認してください。", exc_info=True)
             raise RuntimeError("OpenAIの認証に失敗しました。APIキーを確認してください。") from exc
         except APIStatusError as exc:
+            logger.error(
+                "OpenAI APIリクエストに失敗しました。status=%s message=%s",
+                exc.status_code,
+                exc.message,
+                exc_info=True,
+            )
             raise RuntimeError(
                 f"OpenAI APIリクエストに失敗しました。status={exc.status_code} message={exc.message}"
             ) from exc
         except APIConnectionError as exc:
+            logger.error("OpenAI APIに接続できませんでした。ネットワークを確認してください。", exc_info=True)
             raise RuntimeError("OpenAI APIに接続できませんでした。ネットワークを確認してください。") from exc
         except Exception as exc:  # noqa: BLE001
+            logger.error("OpenAI API呼び出し中に予期しないエラーが発生しました。", exc_info=True)
             raise RuntimeError("OpenAI API呼び出し中に予期しないエラーが発生しました。") from exc
 
         choice = response.choices[0]
