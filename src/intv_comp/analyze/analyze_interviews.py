@@ -510,7 +510,7 @@ def main() -> None:
 
         messages_df = load_csv(args.messages_file)
         # セッション情報は将来的にフィルタ条件などに使用する可能性があるため読み込む
-        _sessions_df = load_csv(args.sessions_file)
+        # _sessions_df = load_csv(args.sessions_file)
 
         validate_required_columns(
             messages_df,
