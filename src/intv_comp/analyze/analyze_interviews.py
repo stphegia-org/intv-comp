@@ -197,31 +197,43 @@ def chunk_messages_for_llm(
         message = row.get(MESSAGE_CONTENT_COL, "")
         line = f"[{timestamp}] {role}: {message}"
         
-        # 新しい行を追加した場合のテキストを仮作成
-        tentative_text = current_chunk_text + "\n" + line if current_chunk_text else line
-        tentative_tokens = _estimate_token_count(tentative_text, model)
+        # 単一メッセージのトークン数を計算（効率化のため1回のみ）
+        line_tokens = _estimate_token_count(line, model)
         
-        if tentative_tokens > max_tokens_per_chunk and current_chunk_text:
-            # 現在のチャンクを確定して次のチャンクへ
-            chunks.append(current_chunk_text)
-            current_chunk_text = line
+        # 単一メッセージがmax_tokens_per_chunkを超える場合の処理
+        if line_tokens > max_tokens_per_chunk:
+            # 現在のチャンクがあれば確定
+            if current_chunk_text:
+                chunks.append(current_chunk_text)
+            # 大きなメッセージを単独で1チャンクとして追加
+            chunks.append(line)
+            current_chunk_text = ""
+            logger.warning(
+                "単一メッセージがmax_tokens_per_chunk ({}) を超えています。"
+                "このメッセージは単独で1チャンクとして扱われます。",
+                max_tokens_per_chunk,
+            )
+            continue
+        
+        # 通常のチャンク分割ロジック
+        if current_chunk_text:
+            current_tokens = _estimate_token_count(current_chunk_text, model)
+            if current_tokens + line_tokens > max_tokens_per_chunk:
+                # 現在のチャンクを確定して次のチャンクへ
+                chunks.append(current_chunk_text)
+                current_chunk_text = line
+            else:
+                # 現在のチャンクに追加
+                current_chunk_text = current_chunk_text + "\n" + line
         else:
-            # 現在のチャンクに追加
-            current_chunk_text = tentative_text
-            
-            # 単一メッセージがmax_tokens_per_chunkを超える場合でも追加
-            # （このメッセージだけで1チャンクになる）
-            if not current_chunk_text and _estimate_token_count(line, model) > max_tokens_per_chunk:
-                logger.warning(
-                    f"単一メッセージがmax_tokens_per_chunk ({max_tokens_per_chunk}) を超えています。"
-                    f"このメッセージは単独で1チャンクとして扱われます。"
-                )
+            # 最初のメッセージ
+            current_chunk_text = line
     
     # 最後のチャンクを追加
     if current_chunk_text:
         chunks.append(current_chunk_text)
     
-    logger.info(f"全メッセージを {len(chunks)} 個のチャンクに分割しました")
+    logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
     return chunks
 
 
@@ -514,13 +526,14 @@ def main() -> None:
             estimated_tokens = _estimate_token_count(reference_materials, args.model)
             if estimated_tokens > 10000:
                 logger.warning(
-                    f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
+                    "追加資料のトークン数が大きい可能性があります（推定: {:,}トークン）。",
+                    estimated_tokens,
                 )
 
         # 全メッセージを時間順に並べる
         logger.info("全メッセージを時間順に並べています...")
         sorted_messages_df = build_global_transcript_df(messages_df)
-        logger.info(f"全 {len(sorted_messages_df)} 件のメッセージを処理対象としました")
+        logger.info("全 {} 件のメッセージを処理対象としました", len(sorted_messages_df))
 
         # メッセージをチャンクに分割
         logger.info("メッセージをチャンクに分割しています...")
@@ -538,7 +551,7 @@ def main() -> None:
         # 各チャンクを分析
         chunk_summaries: List[str] = []
         for i, chunk_text in enumerate(chunks):
-            logger.info(f"チャンク {i + 1}/{len(chunks)} を分析中...")
+            logger.info("チャンク {}/{} を分析中...", i + 1, len(chunks))
             chunk_prompt = build_chunk_analysis_prompt(
                 chunk_index=i,
                 total_chunks=len(chunks),
