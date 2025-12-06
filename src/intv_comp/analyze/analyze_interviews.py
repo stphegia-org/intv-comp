@@ -189,7 +189,6 @@ def chunk_messages_for_llm(
         チャンクごとのテキストリスト
     """
     chunks: List[str] = []
-    current_chunk_lines: List[str] = []
     current_chunk_text = ""
     
     for _, row in sorted_messages_df.iterrows():
@@ -202,15 +201,21 @@ def chunk_messages_for_llm(
         tentative_text = current_chunk_text + "\n" + line if current_chunk_text else line
         tentative_tokens = _estimate_token_count(tentative_text, model)
         
-        if tentative_tokens > max_tokens_per_chunk and current_chunk_lines:
+        if tentative_tokens > max_tokens_per_chunk and current_chunk_text:
             # 現在のチャンクを確定して次のチャンクへ
             chunks.append(current_chunk_text)
-            current_chunk_lines = [line]
             current_chunk_text = line
         else:
             # 現在のチャンクに追加
-            current_chunk_lines.append(line)
             current_chunk_text = tentative_text
+            
+            # 単一メッセージがmax_tokens_per_chunkを超える場合でも追加
+            # （このメッセージだけで1チャンクになる）
+            if not current_chunk_text and _estimate_token_count(line, model) > max_tokens_per_chunk:
+                logger.warning(
+                    f"単一メッセージがmax_tokens_per_chunk ({max_tokens_per_chunk}) を超えています。"
+                    f"このメッセージは単独で1チャンクとして扱われます。"
+                )
     
     # 最後のチャンクを追加
     if current_chunk_text:
@@ -289,15 +294,8 @@ def build_chunk_analysis_prompt(
 {chunk_text}
 """
 
-    # 参考資料は将来的にサマリに差し替える可能性があるため、現時点では含めない
-    # 必要に応じて以下のコメントを外すことも可能
-    # if reference_materials:
-    #     base_prompt += f"""
-    # ---
-    # ## 参考資料
-    # 
-    # {reference_materials}
-    # """
+    # TODO: 参考資料は将来的にサマリに差し替える可能性があるため、現時点では含めない
+    # 必要に応じて以下の実装を追加可能
 
     return base_prompt
 
