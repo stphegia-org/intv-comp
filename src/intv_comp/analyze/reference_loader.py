@@ -15,39 +15,53 @@ from intv_comp.logger import logger
 # Optional imports for document processing
 try:
     from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
     HAS_PDF = True
 except ImportError:
     HAS_PDF = False
+    PdfReadError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from docx import Document
+    from docx.opc.exceptions import PackageNotFoundError as DocxPackageNotFoundError
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
+    DocxPackageNotFoundError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
     HAS_XLSX = True
 except ImportError:
     HAS_XLSX = False
+    InvalidFileException = Exception  # Fallback for exception handling
 
 try:
     from pptx import Presentation
+    from pptx.exc import PackageNotFoundError as PptxPackageNotFoundError
     HAS_PPTX = True
 except ImportError:
     HAS_PPTX = False
+    PptxPackageNotFoundError = Exception  # type: ignore[misc, assignment]  # Fallback for exception handling
 
 try:
     from PIL import Image
     import pytesseract
+    from pytesseract.pytesseract import TesseractNotFoundError, TesseractError
     # Verify tesseract is actually available
     pytesseract.get_tesseract_version()
     HAS_OCR = True
 except ImportError:
     HAS_OCR = False
+    TesseractNotFoundError = Exception  # Fallback for exception handling
+    TesseractError = Exception  # Fallback for exception handling
 except Exception:
-    # Catch any other exception (e.g., TesseractNotFoundError)
+    # Catch Tesseract-specific exceptions and OS errors
+    # (TesseractNotFoundError, TesseractError, OSError)
     HAS_OCR = False
+    TesseractNotFoundError = Exception  # Fallback for exception handling
+    TesseractError = Exception  # Fallback for exception handling
 
 
 def _extract_text_from_pdf(file_path: Path) -> str:
@@ -55,7 +69,7 @@ def _extract_text_from_pdf(file_path: Path) -> str:
     if not HAS_PDF:
         logger.warning(f"PDF処理ライブラリが利用できません: {file_path.name}")
         return ""
-    
+
     try:
         reader = PdfReader(file_path)
         text_parts = []
@@ -64,9 +78,15 @@ def _extract_text_from_pdf(file_path: Path) -> str:
             if text.strip():
                 text_parts.append(f"[ページ {page_num}]\n{text}")
         return "\n\n".join(text_parts)
-    except Exception as exc:
-        logger.warning(f"PDF読み込みエラー: {file_path.name} - {exc}")
-        return ""
+    except PdfReadError as exc:
+        # PDF が壊れている・形式がおかしい等
+        logger.warning("PDF読み込みエラー(不正なPDF): %s - %s", file_path.name, exc)
+    except OSError as exc:
+        # ファイルが存在しない、権限がない、I/O エラーなど
+        logger.warning("PDFファイルアクセスエラー: %s - %s", file_path.name, exc)
+
+    # エラーが発生した場合は空文字列を返す
+    return ""
 
 
 def _extract_text_from_docx(file_path: Path) -> str:
@@ -74,14 +94,20 @@ def _extract_text_from_docx(file_path: Path) -> str:
     if not HAS_DOCX:
         logger.warning(f"Word処理ライブラリが利用できません: {file_path.name}")
         return ""
-    
+
     try:
-        doc = Document(file_path)
+        doc = Document(str(file_path))
         paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
         return "\n\n".join(paragraphs)
-    except Exception as exc:
-        logger.warning(f"Word読み込みエラー: {file_path.name} - {exc}")
-        return ""
+    except DocxPackageNotFoundError as exc:
+        # Wordファイルが壊れている / Word形式ではない場合
+        logger.warning("Word読み込みエラー(不正なWordファイル): %s - %s", file_path.name, exc)
+    except OSError as exc:
+        # ファイルが存在しない、権限がない、I/O エラーなど
+        logger.warning("Wordファイルアクセスエラー: %s - %s", file_path.name, exc)
+
+    # エラーが発生した場合は空文字列を返す
+    return ""
 
 
 def _extract_text_from_xlsx(file_path: Path) -> str:
@@ -89,9 +115,9 @@ def _extract_text_from_xlsx(file_path: Path) -> str:
     if not HAS_XLSX:
         logger.warning(f"Excel処理ライブラリが利用できません: {file_path.name}")
         return ""
-    
+
     try:
-        wb = load_workbook(file_path, read_only=True, data_only=True)
+        wb = load_workbook(str(file_path), read_only=True, data_only=True)
         text_parts = []
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
@@ -104,9 +130,15 @@ def _extract_text_from_xlsx(file_path: Path) -> str:
                 text_parts.append(f"[シート: {sheet_name}]\n" + "\n".join(rows))
         wb.close()
         return "\n\n".join(text_parts)
-    except Exception as exc:
-        logger.warning(f"Excel読み込みエラー: {file_path.name} - {exc}")
-        return ""
+    except InvalidFileException as exc:
+        # xlsx ではない / 壊れているなど
+        logger.warning("Excel読み込みエラー(不正なExcelファイル): %s - %s", file_path.name, exc)
+    except OSError as exc:
+        # ファイルアクセス系エラー
+        logger.warning("Excelファイルアクセスエラー: %s - %s", file_path.name, exc)
+
+    # エラーが発生した場合は空文字列を返す
+    return ""
 
 
 def _extract_text_from_pptx(file_path: Path) -> str:
@@ -114,9 +146,9 @@ def _extract_text_from_pptx(file_path: Path) -> str:
     if not HAS_PPTX:
         logger.warning(f"PowerPoint処理ライブラリが利用できません: {file_path.name}")
         return ""
-    
+
     try:
-        prs = Presentation(file_path)
+        prs = Presentation(str(file_path))
         text_parts = []
         for slide_num, slide in enumerate(prs.slides, 1):
             slide_texts = []
@@ -126,9 +158,15 @@ def _extract_text_from_pptx(file_path: Path) -> str:
             if slide_texts:
                 text_parts.append(f"[スライド {slide_num}]\n" + "\n".join(slide_texts))
         return "\n\n".join(text_parts)
-    except Exception as exc:
-        logger.warning(f"PowerPoint読み込みエラー: {file_path.name} - {exc}")
-        return ""
+    except PptxPackageNotFoundError as exc:
+        # pptx が壊れている / pptx ではない場合
+        logger.warning("PowerPoint読み込みエラー(不正なファイル): %s - %s", file_path.name, exc)
+    except OSError as exc:
+        # I/O、権限などのファイルアクセスエラー
+        logger.warning("PowerPointファイルアクセスエラー: %s - %s", file_path.name, exc)
+
+    # エラーが発生した場合は空文字列を返す
+    return ""
 
 
 def _extract_text_from_image(file_path: Path) -> str:
@@ -136,14 +174,20 @@ def _extract_text_from_image(file_path: Path) -> str:
     if not HAS_OCR:
         logger.warning(f"OCR処理ライブラリが利用できません: {file_path.name}")
         return ""
-    
+
     try:
-        with Image.open(file_path) as image:
+        with Image.open(str(file_path)) as image:
             text = pytesseract.image_to_string(image, lang='jpn+eng')
             return str(text).strip()
-    except Exception as exc:
-        logger.warning(f"画像OCR処理エラー: {file_path.name} - {exc}")
-        return ""
+    except TesseractError as exc:
+        # OCR 処理中のエラー
+        logger.warning("画像OCR処理エラー: %s - %s", file_path.name, exc)
+    except OSError as exc:
+        # ファイルアクセス系エラー
+        logger.warning("画像ファイルアクセスエラー: %s - %s", file_path.name, exc)
+
+    # エラーが発生した場合は空文字列を返す
+    return ""
 
 
 def load_reference_materials(references_dir: Path) -> str:
@@ -185,7 +229,7 @@ def load_reference_materials(references_dir: Path) -> str:
 
     # ファイルを収集
     reference_files: List[Path] = []
-    for ext in file_processors.keys():
+    for ext in file_processors:
         reference_files.extend(references_dir.rglob(f"*{ext}"))
 
     if not reference_files:
@@ -207,11 +251,11 @@ def load_reference_materials(references_dir: Path) -> str:
 
             ext = file_path.suffix.lower()
             processor = file_processors.get(ext)
-            
+
             if processor is None:
                 logger.warning(f"未対応のファイル形式です: {file_path.name}")
                 continue
-            
+
             content = processor(file_path)
             if content and content.strip():
                 materials.append(f"# {file_path.name}\n\n{content}")

@@ -157,7 +157,10 @@ def build_session_prompt(session_id: str, transcript: str, reference_materials: 
     return base_prompt
 
 
-def build_cross_session_prompt(per_session_summaries: List[str], reference_materials: str = "") -> str:
+def build_cross_session_prompt(
+        per_session_summaries: List[str],
+        reference_materials: str = "",
+    ) -> str:
     """複数セッションを俯瞰して共通論点や示唆を抽出するプロンプトを生成する。"""
     joined = "\n\n".join(per_session_summaries)
     base_prompt = f"""
@@ -303,31 +306,41 @@ def main() -> None:
 
         # 追加資料を読み込む
         reference_materials = load_reference_materials(args.references_dir)
-        
+
         # トークン使用量の警告
-        if reference_materials:
-            if HAS_TIKTOKEN:
+        if reference_materials and HAS_TIKTOKEN:
+            try:
                 try:
-                    # tiktokenを使用して正確なトークン数を計算
+                    # モデル名から自動でエンコーディング取得
                     encoding = tiktoken.encoding_for_model(args.model)
-                    estimated_tokens = len(encoding.encode(reference_materials))
-                except Exception:
-                    # モデル名が不明な場合はcl100k_baseを使用
-                    try:
-                        encoding = tiktoken.get_encoding("cl100k_base")
-                        estimated_tokens = len(encoding.encode(reference_materials))
-                    except Exception:
-                        # tiktokenが使用できない場合は概算
-                        estimated_tokens = len(reference_materials) // 4
-            else:
-                # tiktokenがインストールされていない場合は概算
-                estimated_tokens = len(reference_materials) // 4
-            
-            if estimated_tokens > 10000:
+                except KeyError:
+                    # モデル名のマッピングに失敗した場合は cl100k_base にフォールバック
+                    logger.warning(
+                        "モデル '%s' のエンコーディングが取得できなかったため "
+                        "'cl100k_base' を使用します。",
+                        args.model,
+                    )
+                    encoding = tiktoken.get_encoding("cl100k_base")
+
+                estimated_tokens = len(encoding.encode(reference_materials))
+
+            except (KeyError, ValueError) as exc:
+                # エンコーディングが未知 / プラグイン不足などで失敗した場合
                 logger.warning(
-                    f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
-                    f"この資料は各セッション分析とクロスセッション分析で繰り返し送信されます。"
+                    "tiktoken によるトークン見積もりに失敗したため、概算値を使用します: %s",
+                    exc,
                 )
+                estimated_tokens = len(reference_materials) // 4
+
+        else:
+            # tiktoken が使えない場合の概算
+            estimated_tokens = len(reference_materials) // 4
+
+        if estimated_tokens > 10000:
+            logger.warning(
+                f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
+                f"この資料は各セッション分析とクロスセッション分析で繰り返し送信されます。"
+            )
 
         llm = LLMClient(model=args.model)
 
