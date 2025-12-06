@@ -124,7 +124,6 @@ def _extract_text_from_xlsx(file_path: Path) -> str:
     except InvalidFileException as exc:
         # xlsx ではない / 壊れているなど
         logger.warning("Excel読み込みエラー(不正なExcelファイル): %s - %s", file_path.name, exc)
-
     except OSError as exc:
         # ファイルアクセス系エラー
         logger.warning("Excelファイルアクセスエラー: %s - %s", file_path.name, exc)
