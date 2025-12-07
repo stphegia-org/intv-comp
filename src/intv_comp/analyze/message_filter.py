@@ -137,7 +137,9 @@ def calculate_relevance_score(message_content: str) -> float:
         elif len(keyword_lower) <= 3 and any("\u4e00" <= c <= "\u9fff" for c in keyword_lower):
             # 漢字キーワードの前後に漢字がないことを確認（複合語を避けるため）
             # 例: "法案"は"提案"にマッチしないようにする
-            pattern = re.compile(r"(?<![一-龯])" + re.escape(keyword_lower) + r"(?![一-龯])")
+            pattern = re.compile(
+                r"(?<![\u4e00-\u9fff])" + re.escape(keyword_lower) + r"(?![\u4e00-\u9fff])"
+            )
             if pattern.search(content_lower):
                 matched_keywords.append(keyword)
         # 短い英数字キーワードは単語境界を考慮
