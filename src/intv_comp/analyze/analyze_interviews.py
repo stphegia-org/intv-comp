@@ -634,7 +634,7 @@ def format_session_references(text: str) -> str:
     
     # 参照元セッション: または 参照セッション: の後に続くセッションIDリストを検出
     pattern = re.compile(
-        r"(参照(?:元)?セッション:\s*)([A-Z0-9]+(?:\s*,\s*[A-Z0-9]+)*)",
+        r"(参照(?:元)?セッション:\s*)([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)",
         re.MULTILINE
     )
     return pattern.sub(replace_session_ids, text)
