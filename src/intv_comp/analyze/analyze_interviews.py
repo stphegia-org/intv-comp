@@ -268,15 +268,11 @@ def chunk_messages_with_session_tracking(
         if line_tokens > max_tokens_per_chunk:
             # 現在のチャンクがあれば確定
             if current_chunk_text:
-                chunks.append({
-                    "text": current_chunk_text,
-                    "session_ids": sorted(list(current_session_ids))
-                })
+                chunks.append(
+                    {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+                )
             # 大きなメッセージを単独で1チャンクとして追加
-            chunks.append({
-                "text": line,
-                "session_ids": [session_id]
-            })
+            chunks.append({"text": line, "session_ids": [session_id]})
             current_chunk_text = ""
             current_session_ids = set()
             logger.warning(
@@ -291,10 +287,9 @@ def chunk_messages_with_session_tracking(
             current_tokens = _estimate_token_count(current_chunk_text, model)
             if current_tokens + line_tokens > max_tokens_per_chunk:
                 # 現在のチャンクを確定して次のチャンクへ
-                chunks.append({
-                    "text": current_chunk_text,
-                    "session_ids": sorted(list(current_session_ids))
-                })
+                chunks.append(
+                    {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+                )
                 current_chunk_text = line
                 current_session_ids = {session_id}
             else:
@@ -308,10 +303,9 @@ def chunk_messages_with_session_tracking(
 
     # 最後のチャンクを追加
     if current_chunk_text:
-        chunks.append({
-            "text": current_chunk_text,
-            "session_ids": sorted(list(current_session_ids))
-        })
+        chunks.append(
+            {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+        )
 
     logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
     return chunks
@@ -332,14 +326,14 @@ def compress_chunk_summaries(
     - バッチ要約を 1〜2 ラウンド行い、十分に小さくなったところで終了する。
     - 情報を完全には保持できないが、「全体像を掴む」という用途には
       影響が少ないよう、要点を残した圧縮を行う。
-    
+
     Args:
         chunk_summaries: チャンクサマリのリスト
         chunk_session_ids: 各チャンクに対応するセッションIDのリスト
         llm: LLMClient インスタンス
         model: 使用するモデル名
         max_tokens_for_global_prompt: プロンプトの最大トークン数
-    
+
     Returns:
         (圧縮されたサマリのリスト, 対応するセッションIDのリスト) のタプル
     """
@@ -569,7 +563,7 @@ def build_global_summary_prompt(
             sessions_str = ", ".join(chunk_session_ids[i])
             session_info = f"\n**参照セッション**: {sessions_str}\n"
         joined_parts.append(f"### チャンク {i + 1} の分析結果{session_info}\n{summary}")
-    
+
     joined = "\n\n---\n\n".join(joined_parts)
 
     # 参照資料情報を追加
@@ -638,17 +632,18 @@ def extract_tagged_section(text: str, tag: str) -> str:
 
 def format_session_references(text: str) -> str:
     """テキスト内のセッション参照を検出し、URLリンクに変換する。
-    
+
     以下のパターンを検出してHTMLリンクに変換する：
     - 参照元セッション: S001, S014
     - 参照セッション: S001, S002
-    
+
     Args:
         text: 変換対象のテキスト
-    
+
     Returns:
         URLリンクに変換されたテキスト
     """
+
     def replace_session_ids(match: re.Match[str]) -> str:
         """セッションIDリストをHTMLリンクに変換する。"""
         prefix = match.group(1)
@@ -664,11 +659,10 @@ def format_session_references(text: str) -> str:
                 escaped_sid = html.escape(sid)
                 links.append(f'<a href="{url}">{escaped_sid}</a>')
         return f"{prefix}{', '.join(links)}"
-    
+
     # 参照元セッション: または 参照セッション: の後に続くセッションIDリストを検出
     pattern = re.compile(
-        r"(参照(?:元)?セッション:\s*)([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)",
-        re.MULTILINE
+        r"(参照(?:元)?セッション:\s*)([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)", re.MULTILINE
     )
     return pattern.sub(replace_session_ids, text)
 
@@ -846,7 +840,7 @@ def main() -> None:
             chunk_text = str(chunk_info["text"])
             session_ids_list = cast(List[str], chunk_info.get("session_ids", []))
             chunk_session_ids.append([str(sid) for sid in session_ids_list])
-            
+
             logger.info("チャンク {}/{} を分析中...", i + 1, len(chunk_data))
             chunk_prompt = build_chunk_analysis_prompt(
                 chunk_index=i,
@@ -894,9 +888,7 @@ def main() -> None:
         suggestions = extract_tagged_section(global_response, "suggestions")
 
         # セッションIDのリストを取得
-        unique_session_ids = sorted(
-            messages_df[SESSION_ID_COL].dropna().astype(str).unique()
-        )
+        unique_session_ids = sorted(messages_df[SESSION_ID_COL].dropna().astype(str).unique())
         logger.info("分析対象のセッション数: {}", len(unique_session_ids))
 
         report = render_report(

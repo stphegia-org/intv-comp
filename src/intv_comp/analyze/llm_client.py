@@ -1,6 +1,7 @@
 """
 OpenAI LLM呼び出し周りを切り出したクライアントモジュール。
 """
+
 from __future__ import annotations
 
 import os
@@ -80,8 +81,12 @@ class LLMClient:
                 f"OpenAI APIリクエストに失敗しました。status={exc.status_code} message={exc.message}"
             ) from exc
         except APIConnectionError as exc:
-            logger.error("OpenAI APIに接続できませんでした。ネットワークを確認してください。", exc_info=True)
-            raise RuntimeError("OpenAI APIに接続できませんでした。ネットワークを確認してください。") from exc
+            logger.error(
+                "OpenAI APIに接続できませんでした。ネットワークを確認してください。", exc_info=True
+            )
+            raise RuntimeError(
+                "OpenAI APIに接続できませんでした。ネットワークを確認してください。"
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             logger.error("OpenAI API呼び出し中に予期しないエラーが発生しました。", exc_info=True)
             raise RuntimeError("OpenAI API呼び出し中に予期しないエラーが発生しました。") from exc
