@@ -3,6 +3,7 @@ AIインタビューログのCSVを読み込み、全メッセージをグロー
 
 実際の列名やモデル名は冒頭の定数にまとめているので、必要に応じて書き換えてください。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 
 try:
     import tiktoken
+
     HAS_TIKTOKEN = True
 except ImportError:
     HAS_TIKTOKEN = False
@@ -36,6 +38,9 @@ TIMESTAMP_COL = "timestamp"  # メッセージCSVのタイムスタンプ列名
 
 # チャンク分割の設定
 DEFAULT_MAX_TOKENS_PER_CHUNK = int(os.getenv("MAX_TOKENS_PER_CHUNK", "8000"))
+
+# 全体統合プロンプトに含めるテキストのトークン上限（TPM 制限に収まるようにマージンを取る）
+DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT = int(os.getenv("MAX_TOKENS_FOR_GLOBAL_PROMPT", "24000"))
 
 
 def _get_env_var(env_var: str) -> str:
@@ -130,10 +135,10 @@ def build_session_transcript(session_df: pd.DataFrame) -> str:
 
 def build_global_transcript_df(messages_df: pd.DataFrame) -> pd.DataFrame:
     """全メッセージをタイムスタンプ順に並べたDataFrameを返す。
-    
+
     Args:
         messages_df: メッセージを含むDataFrame
-        
+
     Returns:
         タイムスタンプでソートされたDataFrame
     """
@@ -142,11 +147,11 @@ def build_global_transcript_df(messages_df: pd.DataFrame) -> pd.DataFrame:
 
 def _estimate_token_count(text: str, model: str = DEFAULT_MODEL) -> int:
     """テキストのトークン数を見積もる。
-    
+
     Args:
         text: トークン数を見積もるテキスト
         model: 使用するモデル名（tiktokenのエンコーディング選択に使用）
-        
+
     Returns:
         推定トークン数
     """
@@ -179,27 +184,27 @@ def chunk_messages_for_llm(
     model: str = DEFAULT_MODEL,
 ) -> List[str]:
     """タイムスタンプ順のメッセージをトークン上限を考慮してチャンクに分割する。
-    
+
     Args:
         sorted_messages_df: タイムスタンプ順にソートされたメッセージDataFrame
         max_tokens_per_chunk: 1チャンクあたりの最大トークン数
         model: 使用するモデル名（トークン推定に使用）
-        
+
     Returns:
         チャンクごとのテキストリスト
     """
     chunks: List[str] = []
     current_chunk_text = ""
-    
+
     for _, row in sorted_messages_df.iterrows():
         timestamp = row.get(TIMESTAMP_COL, "")
         role = row.get(ROLE_COL, "")
         message = row.get(MESSAGE_CONTENT_COL, "")
         line = f"[{timestamp}] {role}: {message}"
-        
+
         # 単一メッセージのトークン数を計算（効率化のため1回のみ）
         line_tokens = _estimate_token_count(line, model)
-        
+
         # 単一メッセージがmax_tokens_per_chunkを超える場合の処理
         if line_tokens > max_tokens_per_chunk:
             # 現在のチャンクがあれば確定
@@ -214,7 +219,7 @@ def chunk_messages_for_llm(
                 max_tokens_per_chunk,
             )
             continue
-        
+
         # 通常のチャンク分割ロジック
         if current_chunk_text:
             current_tokens = _estimate_token_count(current_chunk_text, model)
@@ -228,13 +233,105 @@ def chunk_messages_for_llm(
         else:
             # 最初のメッセージ
             current_chunk_text = line
-    
+
     # 最後のチャンクを追加
     if current_chunk_text:
         chunks.append(current_chunk_text)
-    
+
     logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
     return chunks
+
+
+def compress_chunk_summaries(
+    chunk_summaries: List[str],
+    llm: LLMClient,
+    model: str,
+    max_tokens_for_global_prompt: int = DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT,
+) -> List[str]:
+    """全体統合プロンプトに渡すチャンクサマリを階層的に圧縮する。
+
+    - chunk_summaries 全体をそのまま連結したときの推定トークン数が
+      max_tokens_for_global_prompt を超える場合、バッチごとに LLM に再要約させて
+      要約リストを作り直す。
+    - バッチ要約を 1〜2 ラウンド行い、十分に小さくなったところで終了する。
+    - 情報を完全には保持できないが、「全体像を掴む」という用途には
+      影響が少ないよう、要点を残した圧縮を行う。
+    """
+    if not chunk_summaries:
+        return chunk_summaries
+
+    # まず現在の合計トークン数を概算
+    joined = "\n\n".join(chunk_summaries)
+    total_tokens = _estimate_token_count(joined, model=model)
+    if total_tokens <= max_tokens_for_global_prompt:
+        # そもそも十分小さい場合はそのまま返す
+        logger.info(
+            "全体統合プロンプト用チャンクサマリは推定 %s トークンのため圧縮不要です",
+            total_tokens,
+        )
+        return chunk_summaries
+
+    logger.warning(
+        "全体統合プロンプト用チャンクサマリが大きすぎます（推定: %s トークン）。"
+        " 階層的に圧縮を行います。",
+        total_tokens,
+    )
+
+    current = chunk_summaries
+    max_rounds = 2  # 安全のため圧縮ラウンド数に上限を設ける
+    batch_size = 10
+
+    for round_index in range(max_rounds):
+        if len(current) == 1:
+            # これ以上は圧縮しようがないので終了
+            break
+
+        next_level: List[str] = []
+        for i in range(0, len(current), batch_size):
+            batch = current[i : i + batch_size]
+            if not batch:
+                continue
+
+            batch_text = "\n\n---\n\n".join(batch)
+            batch_prompt = f"""以下はインタビューログを分割して得られた部分分析結果の一部です。
+複数のサマリを統合し、**重複を減らしつつ重要な論点を残す形で**日本語の箇条書きに要約してください。
+
+- 法整備・制度設計の観点で重要なポイント
+- 暗黙の前提や制度の隙間
+- 追加で検討すべき示唆
+
+出力は 1 つのまとまったサマリのみとし、できるだけ簡潔にしてください。
+
+---
+## 統合対象サマリ
+
+{batch_text}
+"""
+
+            summary = llm.chat_completion(
+                system_prompt=(
+                    "あなたはリーガルテック領域の調査アナリストです。"
+                    "複数の部分サマリから重複を削り、重要な論点だけを残して要約してください。"
+                ),
+                user_prompt=batch_prompt,
+            )
+            next_level.append(summary)
+
+        current = next_level
+
+        # 圧縮後のサイズを確認
+        joined = "\n\n".join(current)
+        total_tokens = _estimate_token_count(joined, model=model)
+        logger.info(
+            "チャンクサマリ圧縮ラウンド %s 終了: 要素数=%s, 推定トークン数=%s",
+            round_index + 1,
+            len(current),
+            total_tokens,
+        )
+        if total_tokens <= max_tokens_for_global_prompt:
+            break
+
+    return current
 
 
 def build_session_prompt(session_id: str, transcript: str, reference_materials: str = "") -> str:
@@ -276,13 +373,13 @@ def build_chunk_analysis_prompt(
     reference_materials: str = "",
 ) -> str:
     """チャンク単位の部分分析を行うためのユーザープロンプトを生成する。
-    
+
     Args:
         chunk_index: 現在のチャンクのインデックス（0始まり）
         total_chunks: 全チャンク数
         chunk_text: チャンクのテキスト
         reference_materials: 参考資料（オプション）
-        
+
     Returns:
         チャンク分析用のプロンプト文字列
     """
@@ -313,9 +410,9 @@ def build_chunk_analysis_prompt(
 
 
 def build_cross_session_prompt(
-        per_session_summaries: List[str],
-        reference_materials: str = "",
-    ) -> str:
+    per_session_summaries: List[str],
+    reference_materials: str = "",
+) -> str:
     """複数セッションを俯瞰して共通論点や示唆を抽出するプロンプトを生成する。"""
     joined = "\n\n".join(per_session_summaries)
     base_prompt = f"""
@@ -356,19 +453,18 @@ def build_global_summary_prompt(
     reference_materials: str = "",
 ) -> str:
     """チャンク分析結果から全体レポートを作成するプロンプトを生成する。
-    
+
     Args:
         chunk_summaries: 各チャンクの分析結果リスト
         reference_materials: 参考資料（オプション）
-        
+
     Returns:
         全体統合用のプロンプト文字列
     """
     joined = "\n\n---\n\n".join(
-        f"### チャンク {i + 1} の分析結果\n\n{summary}"
-        for i, summary in enumerate(chunk_summaries)
+        f"### チャンク {i + 1} の分析結果\n\n{summary}" for i, summary in enumerate(chunk_summaries)
     )
-    
+
     base_prompt = f"""
 以下は全インタビューログを複数のチャンクに分けて分析した結果です。
 これらの部分分析を統合し、全体を俯瞰した上で、共通するパターンや見落とされがちな論点を抽出してください。
@@ -427,12 +523,12 @@ def render_report(
     suggestions: str,
 ) -> str:
     """Markdownレポート全文を生成する。
-    
+
     Args:
         overall_summary: 全体サマリー
         overlooked_points: 見落とされがちなポイント
         suggestions: 改善提案・示唆
-        
+
     Returns:
         レポートのMarkdown文字列
     """
@@ -452,7 +548,9 @@ def render_report(
 
 def parse_arguments() -> argparse.Namespace:
     """コマンドライン引数を解析する。"""
-    parser = argparse.ArgumentParser(description="AIインタビューログを分析してMarkdownレポートを生成します。")
+    parser = argparse.ArgumentParser(
+        description="AIインタビューログを分析してMarkdownレポートを生成します。"
+    )
     parser.add_argument(
         "--messages-file",
         type=Path,
@@ -544,7 +642,9 @@ def main() -> None:
         )
 
         if not chunks:
-            raise RuntimeError("分析対象のメッセージが見つかりませんでした。CSVの内容を確認してください。")
+            raise RuntimeError(
+                "分析対象のメッセージが見つかりませんでした。CSVの内容を確認してください。"
+            )
 
         llm = LLMClient(model=args.model)
 
@@ -567,9 +667,18 @@ def main() -> None:
             )
             chunk_summaries.append(chunk_analysis)
 
-        # 全体統合レポートを生成
+        # 全体統合プロンプト用にチャンクサマリを圧縮
+        logger.info("全体統合プロンプト用にチャンクサマリを圧縮しています...")
+        compressed_chunk_summaries = compress_chunk_summaries(
+            chunk_summaries=chunk_summaries,
+            llm=llm,
+            model=args.model,
+            max_tokens_for_global_prompt=DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT,
+        )
+
+        # 圧縮後のサマリから全体統合レポートを生成
         logger.info("チャンク分析結果を統合して全体レポートを生成中...")
-        global_prompt = build_global_summary_prompt(chunk_summaries, reference_materials)
+        global_prompt = build_global_summary_prompt(compressed_chunk_summaries, reference_materials)
         global_response = llm.chat_completion(
             system_prompt=(
                 "あなたは政策立案担当者向けに論点を整理する専門家です。"
