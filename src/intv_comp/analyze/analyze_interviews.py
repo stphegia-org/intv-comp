@@ -198,53 +198,10 @@ def chunk_messages_for_llm(
     Returns:
         チャンクごとのテキストリスト
     """
-    chunks: List[str] = []
-    current_chunk_text = ""
-
-    for _, row in sorted_messages_df.iterrows():
-        timestamp = row.get(TIMESTAMP_COL, "")
-        role = row.get(ROLE_COL, "")
-        message = row.get(MESSAGE_CONTENT_COL, "")
-        line = f"[{timestamp}] {role}: {message}"
-
-        # 単一メッセージのトークン数を計算（効率化のため1回のみ）
-        line_tokens = _estimate_token_count(line, model)
-
-        # 単一メッセージがmax_tokens_per_chunkを超える場合の処理
-        if line_tokens > max_tokens_per_chunk:
-            # 現在のチャンクがあれば確定
-            if current_chunk_text:
-                chunks.append(current_chunk_text)
-            # 大きなメッセージを単独で1チャンクとして追加
-            chunks.append(line)
-            current_chunk_text = ""
-            logger.warning(
-                "単一メッセージがmax_tokens_per_chunk ({}) を超えています。"
-                "このメッセージは単独で1チャンクとして扱われます。",
-                max_tokens_per_chunk,
-            )
-            continue
-
-        # 通常のチャンク分割ロジック
-        if current_chunk_text:
-            current_tokens = _estimate_token_count(current_chunk_text, model)
-            if current_tokens + line_tokens > max_tokens_per_chunk:
-                # 現在のチャンクを確定して次のチャンクへ
-                chunks.append(current_chunk_text)
-                current_chunk_text = line
-            else:
-                # 現在のチャンクに追加
-                current_chunk_text = current_chunk_text + "\n" + line
-        else:
-            # 最初のメッセージ
-            current_chunk_text = line
-
-    # 最後のチャンクを追加
-    if current_chunk_text:
-        chunks.append(current_chunk_text)
-
-    logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
-    return chunks
+    chunk_data = chunk_messages_with_session_tracking(
+        sorted_messages_df, max_tokens_per_chunk, model
+    )
+    return [str(chunk["text"]) for chunk in chunk_data]
 
 
 def chunk_messages_with_session_tracking(
@@ -331,10 +288,11 @@ def chunk_messages_with_session_tracking(
 
 def compress_chunk_summaries(
     chunk_summaries: List[str],
+    chunk_session_ids: List[List[str]],
     llm: LLMClient,
     model: str,
     max_tokens_for_global_prompt: int = DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT,
-) -> List[str]:
+) -> tuple[List[str], List[List[str]]]:
     """全体統合プロンプトに渡すチャンクサマリを階層的に圧縮する。
 
     - chunk_summaries 全体をそのまま連結したときの推定トークン数が
@@ -343,9 +301,19 @@ def compress_chunk_summaries(
     - バッチ要約を 1〜2 ラウンド行い、十分に小さくなったところで終了する。
     - 情報を完全には保持できないが、「全体像を掴む」という用途には
       影響が少ないよう、要点を残した圧縮を行う。
+    
+    Args:
+        chunk_summaries: チャンクサマリのリスト
+        chunk_session_ids: 各チャンクに対応するセッションIDのリスト
+        llm: LLMClient インスタンス
+        model: 使用するモデル名
+        max_tokens_for_global_prompt: プロンプトの最大トークン数
+    
+    Returns:
+        (圧縮されたサマリのリスト, 対応するセッションIDのリスト) のタプル
     """
     if not chunk_summaries:
-        return chunk_summaries
+        return chunk_summaries, chunk_session_ids
 
     # まず現在の合計トークン数を概算
     joined = "\n\n".join(chunk_summaries)
@@ -356,7 +324,7 @@ def compress_chunk_summaries(
             "全体統合プロンプト用チャンクサマリは推定 {} トークンのため圧縮不要です",
             total_tokens,
         )
-        return chunk_summaries
+        return chunk_summaries, chunk_session_ids
 
     logger.warning(
         "全体統合プロンプト用チャンクサマリが大きすぎます（推定: {} トークン）。"
@@ -365,6 +333,7 @@ def compress_chunk_summaries(
     )
 
     current = chunk_summaries
+    current_session_ids = chunk_session_ids
     max_rounds = DEFAULT_COMPRESSION_MAX_ROUNDS
     batch_size = DEFAULT_COMPRESSION_BATCH_SIZE
 
@@ -374,10 +343,17 @@ def compress_chunk_summaries(
             break
 
         next_level: List[str] = []
+        next_session_ids: List[List[str]] = []
         for i in range(0, len(current), batch_size):
             batch = current[i : i + batch_size]
             if not batch:
                 continue
+
+            # バッチに対応するセッションIDを集約
+            batch_sessions: set[str] = set()
+            for j in range(i, min(i + batch_size, len(current_session_ids))):
+                if j < len(current_session_ids):
+                    batch_sessions.update(current_session_ids[j])
 
             batch_text = "\n\n---\n\n".join(batch)
             batch_prompt = f"""以下はインタビューログを分割して得られた部分分析結果の一部です。
@@ -403,8 +379,10 @@ def compress_chunk_summaries(
                 user_prompt=batch_prompt,
             )
             next_level.append(summary)
+            next_session_ids.append(sorted(list(batch_sessions)))
 
         current = next_level
+        current_session_ids = next_session_ids
 
         # 圧縮後のサイズを確認
         joined = "\n\n".join(current)
@@ -418,7 +396,7 @@ def compress_chunk_summaries(
         if total_tokens <= max_tokens_for_global_prompt:
             break
 
-    return current
+    return current, current_session_ids
 
 
 def build_session_prompt(session_id: str, transcript: str, reference_materials: str = "") -> str:
@@ -857,18 +835,13 @@ def main() -> None:
 
         # 全体統合プロンプト用にチャンクサマリを圧縮
         logger.info("全体統合プロンプト用にチャンクサマリを圧縮しています...")
-        compressed_chunk_summaries = compress_chunk_summaries(
+        compressed_chunk_summaries, compressed_session_ids = compress_chunk_summaries(
             chunk_summaries=chunk_summaries,
+            chunk_session_ids=chunk_session_ids,
             llm=llm,
             model=args.model,
             max_tokens_for_global_prompt=DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT,
         )
-
-        # 圧縮時にセッションID情報も集約（全てのセッションIDを含める）
-        all_session_ids: set[str] = set()
-        for session_list in chunk_session_ids:
-            all_session_ids.update(session_list)
-        compressed_session_ids = [sorted(list(all_session_ids))] * len(compressed_chunk_summaries)
 
         # 圧縮後のサマリから全体統合レポートを生成
         logger.info("チャンク分析結果を統合して全体レポートを生成中...")
