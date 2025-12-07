@@ -26,6 +26,10 @@ except ImportError:
     HAS_TIKTOKEN = False
 
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
+from intv_comp.analyze.message_filter import (
+    DEFAULT_RELEVANCE_THRESHOLD,
+    filter_messages_by_relevance,
+)
 from intv_comp.analyze.reference_loader import load_reference_materials_with_filenames
 from intv_comp.logger import logger, setup_logger
 
@@ -209,6 +213,8 @@ def chunk_messages_with_session_tracking(
     sorted_messages_df: pd.DataFrame,
     max_tokens_per_chunk: int,
     model: str = DEFAULT_MODEL,
+    filter_irrelevant: bool = True,
+    relevance_threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
 ) -> List[Dict[str, object]]:
     """タイムスタンプ順のメッセージをトークン上限を考慮してチャンクに分割し、セッションIDを追跡する。
 
@@ -216,15 +222,39 @@ def chunk_messages_with_session_tracking(
         sorted_messages_df: タイムスタンプ順にソートされたメッセージDataFrame
         max_tokens_per_chunk: 1チャンクあたりの最大トークン数
         model: 使用するモデル名（トークン推定に使用）
+        filter_irrelevant: 法案・業務と無関係なメッセージを除外するかどうか
+        relevance_threshold: 関連度の閾値（この値以下のメッセージは除外される）
 
     Returns:
         チャンクごとの辞書リスト。各辞書は 'text' (str) と 'session_ids' (List[str]) を含む。
     """
+    # フィルタリングを適用
+    if filter_irrelevant:
+        logger.info(
+            "法案・業務関連度によるメッセージフィルタリングを開始します（閾値: {:.2f}）",
+            relevance_threshold,
+        )
+        filtered_df = filter_messages_by_relevance(
+            sorted_messages_df,
+            threshold=relevance_threshold,
+            content_col=MESSAGE_CONTENT_COL,
+        )
+    else:
+        filtered_df = sorted_messages_df
+        logger.info("メッセージフィルタリングはスキップされました")
+
+    # フィルタリング後のデータフレームが空の場合
+    if len(filtered_df) == 0:
+        logger.warning(
+            "フィルタリング後のメッセージが0件になりました。空のチャンクリストを返します。"
+        )
+        return []
+
     chunks: List[Dict[str, object]] = []
     current_chunk_text = ""
     current_session_ids: Set[str] = set()
 
-    for _, row in sorted_messages_df.iterrows():
+    for _, row in filtered_df.iterrows():
         timestamp = row.get(TIMESTAMP_COL, "")
         role = row.get(ROLE_COL, "")
         message = row.get(MESSAGE_CONTENT_COL, "")
