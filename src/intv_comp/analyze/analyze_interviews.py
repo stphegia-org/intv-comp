@@ -1,5 +1,5 @@
 """
-AIインタビューログのCSVを読み込み、セッション単位でLLMに分析を依頼し、Markdownレポートを出力するスクリプト。
+AIインタビューログのCSVを読み込み、全メッセージをグローバル分析し、Markdownレポートを出力するスクリプト。
 
 実際の列名やモデル名は冒頭の定数にまとめているので、必要に応じて書き換えてください。
 """
@@ -33,6 +33,9 @@ SESSION_ID_COL = "session_id"  # メッセージCSVのセッションID列名
 MESSAGE_CONTENT_COL = "content"  # メッセージCSVのメッセージ本文列名
 ROLE_COL = "role"  # メッセージCSVの話者ロール列名
 TIMESTAMP_COL = "timestamp"  # メッセージCSVのタイムスタンプ列名
+
+# チャンク分割の設定
+DEFAULT_MAX_TOKENS_PER_CHUNK = int(os.getenv("MAX_TOKENS_PER_CHUNK", "8000"))
 
 
 def _get_env_var(env_var: str) -> str:
@@ -84,11 +87,11 @@ def validate_required_columns(df: pd.DataFrame, required: Sequence[str], label: 
 def get_session_order(sessions_df: pd.DataFrame, messages_df: pd.DataFrame) -> List[str]:
     """セッションIDのリストを取得する。sessions_dfになければmessages_dfからuniqueを取得。"""
     if SESSION_ID_COL in sessions_df.columns:
-        ids = sessions_df[SESSION_ID_COL].dropna().astype(str).tolist()
+        ids: List[str] = sessions_df[SESSION_ID_COL].dropna().astype(str).tolist()
         return ids
     # セッション情報がない場合はメッセージ側のユニーク値で代替
-    ids = messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
-    return ids
+    unique_ids: List[str] = messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
+    return unique_ids
 
 
 def select_session_ids(
@@ -125,6 +128,115 @@ def build_session_transcript(session_df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
+def build_global_transcript_df(messages_df: pd.DataFrame) -> pd.DataFrame:
+    """全メッセージをタイムスタンプ順に並べたDataFrameを返す。
+    
+    Args:
+        messages_df: メッセージを含むDataFrame
+        
+    Returns:
+        タイムスタンプでソートされたDataFrame
+    """
+    return messages_df.sort_values(TIMESTAMP_COL).reset_index(drop=True)
+
+
+def _estimate_token_count(text: str, model: str = DEFAULT_MODEL) -> int:
+    """テキストのトークン数を見積もる。
+    
+    Args:
+        text: トークン数を見積もるテキスト
+        model: 使用するモデル名（tiktokenのエンコーディング選択に使用）
+        
+    Returns:
+        推定トークン数
+    """
+    if HAS_TIKTOKEN:
+        try:
+            try:
+                encoding = tiktoken.encoding_for_model(model)
+            except KeyError:
+                logger.warning(
+                    "モデル '%s' のエンコーディングが取得できなかったため "
+                    "'cl100k_base' を使用します。",
+                    model,
+                )
+                encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except (KeyError, ValueError) as exc:
+            logger.warning(
+                "tiktoken によるトークン見積もりに失敗したため、概算値を使用します: %s",
+                exc,
+            )
+            return len(text) // 4
+    else:
+        # tiktokenが使えない場合は文字数ベースの概算
+        return len(text) // 4
+
+
+def chunk_messages_for_llm(
+    sorted_messages_df: pd.DataFrame,
+    max_tokens_per_chunk: int,
+    model: str = DEFAULT_MODEL,
+) -> List[str]:
+    """タイムスタンプ順のメッセージをトークン上限を考慮してチャンクに分割する。
+    
+    Args:
+        sorted_messages_df: タイムスタンプ順にソートされたメッセージDataFrame
+        max_tokens_per_chunk: 1チャンクあたりの最大トークン数
+        model: 使用するモデル名（トークン推定に使用）
+        
+    Returns:
+        チャンクごとのテキストリスト
+    """
+    chunks: List[str] = []
+    current_chunk_text = ""
+    
+    for _, row in sorted_messages_df.iterrows():
+        timestamp = row.get(TIMESTAMP_COL, "")
+        role = row.get(ROLE_COL, "")
+        message = row.get(MESSAGE_CONTENT_COL, "")
+        line = f"[{timestamp}] {role}: {message}"
+        
+        # 単一メッセージのトークン数を計算（効率化のため1回のみ）
+        line_tokens = _estimate_token_count(line, model)
+        
+        # 単一メッセージがmax_tokens_per_chunkを超える場合の処理
+        if line_tokens > max_tokens_per_chunk:
+            # 現在のチャンクがあれば確定
+            if current_chunk_text:
+                chunks.append(current_chunk_text)
+            # 大きなメッセージを単独で1チャンクとして追加
+            chunks.append(line)
+            current_chunk_text = ""
+            logger.warning(
+                "単一メッセージがmax_tokens_per_chunk ({}) を超えています。"
+                "このメッセージは単独で1チャンクとして扱われます。",
+                max_tokens_per_chunk,
+            )
+            continue
+        
+        # 通常のチャンク分割ロジック
+        if current_chunk_text:
+            current_tokens = _estimate_token_count(current_chunk_text, model)
+            if current_tokens + line_tokens > max_tokens_per_chunk:
+                # 現在のチャンクを確定して次のチャンクへ
+                chunks.append(current_chunk_text)
+                current_chunk_text = line
+            else:
+                # 現在のチャンクに追加
+                current_chunk_text = current_chunk_text + "\n" + line
+        else:
+            # 最初のメッセージ
+            current_chunk_text = line
+    
+    # 最後のチャンクを追加
+    if current_chunk_text:
+        chunks.append(current_chunk_text)
+    
+    logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
+    return chunks
+
+
 def build_session_prompt(session_id: str, transcript: str, reference_materials: str = "") -> str:
     """セッション単位の分析を行うためのユーザープロンプトを生成する。"""
     base_prompt = f"""
@@ -153,6 +265,49 @@ def build_session_prompt(session_id: str, transcript: str, reference_materials: 
 
 {reference_materials}
 """
+
+    return base_prompt
+
+
+def build_chunk_analysis_prompt(
+    chunk_index: int,
+    total_chunks: int,
+    chunk_text: str,
+    reference_materials: str = "",
+) -> str:
+    """チャンク単位の部分分析を行うためのユーザープロンプトを生成する。
+    
+    Args:
+        chunk_index: 現在のチャンクのインデックス（0始まり）
+        total_chunks: 全チャンク数
+        chunk_text: チャンクのテキスト
+        reference_materials: 参考資料（オプション）
+        
+    Returns:
+        チャンク分析用のプロンプト文字列
+    """
+    base_prompt = f"""
+以下は全インタビューログを時間順に分割した一部分です（チャンク {chunk_index + 1}/{total_chunks}）。
+このチャンクから読み取れる重要な論点や示唆を抽出してください。
+
+最終的な統合レポートは別のステップで作成されるため、この段階では「部分的な発見」を以下の観点で箇条書きにしてください。
+重要と思うポイントを漏らさず挙げてください。
+
+**分析観点：**
+- インタビュー対象者の主な主張・懸念点
+- 法整備の観点で重要になりそうな論点
+- インタビュアー／対象者が暗黙に前提としているルールや慣行
+- 現行法や制度では拾いきれていない可能性があるポイント
+- 追加で調査すべき事項や確認が必要な前提
+
+---
+## インタビューログ（チャンク {chunk_index + 1}/{total_chunks}）
+
+{chunk_text}
+"""
+
+    # TODO: 参考資料は将来的にサマリに差し替える可能性があるため、現時点では含めない
+    # 必要に応じて以下の実装を追加可能
 
     return base_prompt
 
@@ -196,6 +351,67 @@ def build_cross_session_prompt(
     return base_prompt
 
 
+def build_global_summary_prompt(
+    chunk_summaries: List[str],
+    reference_materials: str = "",
+) -> str:
+    """チャンク分析結果から全体レポートを作成するプロンプトを生成する。
+    
+    Args:
+        chunk_summaries: 各チャンクの分析結果リスト
+        reference_materials: 参考資料（オプション）
+        
+    Returns:
+        全体統合用のプロンプト文字列
+    """
+    joined = "\n\n---\n\n".join(
+        f"### チャンク {i + 1} の分析結果\n\n{summary}"
+        for i, summary in enumerate(chunk_summaries)
+    )
+    
+    base_prompt = f"""
+以下は全インタビューログを複数のチャンクに分けて分析した結果です。
+これらの部分分析を統合し、全体を俯瞰した上で、共通するパターンや見落とされがちな論点を抽出してください。
+
+結果は以下の3セクションを日本語Markdownで生成してください：
+
+[overall_summary]
+- 全体サマリー（全てのインタビューを通じた主要な洞察）
+[/overall_summary]
+[overlooked_points]
+- 法整備の観点で見落とされがちなポイント（暗黙の前提や制度の隙間を含む）
+[/overlooked_points]
+[suggestions]
+- 改善提案・追加で検討すべき示唆
+[/suggestions]
+
+---
+## チャンク分析結果
+
+{joined}
+"""
+
+    # 参考資料のトークン数をチェックして、大きすぎる場合は含めない
+    if reference_materials:
+        ref_tokens = _estimate_token_count(reference_materials)
+        if ref_tokens > 10000:
+            logger.warning(
+                f"参考資料のトークン数が大きいため（推定: {ref_tokens:,}トークン）、"
+                "全体統合プロンプトには含めません。"
+            )
+        else:
+            base_prompt += f"""
+---
+## 参考資料
+
+以下の追加資料も分析の参考にしてください：
+
+{reference_materials}
+"""
+
+    return base_prompt
+
+
 def extract_tagged_section(text: str, tag: str) -> str:
     """[tag]...[/tag] の区間を抽出するヘルパー。"""
     pattern = re.compile(rf"\[{tag}\](.*?)\[/{tag}\]", re.DOTALL)
@@ -209,23 +425,27 @@ def render_report(
     overall_summary: str,
     overlooked_points: str,
     suggestions: str,
-    per_session_sections: List[str],
 ) -> str:
-    """Markdownレポート全文を生成する。"""
-    session_block = "\n\n".join(per_session_sections)
+    """Markdownレポート全文を生成する。
+    
+    Args:
+        overall_summary: 全体サマリー
+        overlooked_points: 見落とされがちなポイント
+        suggestions: 改善提案・示唆
+        
+    Returns:
+        レポートのMarkdown文字列
+    """
     return f"""
 # AIインタビューログ分析レポート
 
 ## 1. 全体サマリー
 {overall_summary}
 
-## 2. セッション別の主な論点
-{session_block}
-
-## 3. 法整備の観点で見落とされがちなポイント
+## 2. 法整備の観点で見落とされがちなポイント
 {overlooked_points}
 
-## 4. 改善提案・示唆
+## 3. 改善提案・示唆
 {suggestions}
 """
 
@@ -289,7 +509,8 @@ def main() -> None:
             logger.warning("絶対パスが指定されました。相対パスの使用を推奨します。")
 
         messages_df = load_csv(args.messages_file)
-        sessions_df = load_csv(args.sessions_file)
+        # セッション情報は将来的にフィルタ条件などに使用する可能性があるため読み込む
+        # _sessions_df = load_csv(args.sessions_file)
 
         validate_required_columns(
             messages_df,
@@ -297,87 +518,74 @@ def main() -> None:
             "メッセージCSV",
         )
 
-        session_order = get_session_order(sessions_df, messages_df)
-        selected_ids = select_session_ids(session_order, args.limit_sessions, args.sample)
-        grouped_messages = group_messages_by_session(messages_df)
-
-        if not selected_ids:
-            raise RuntimeError("分析対象のセッションが見つかりませんでした。CSVの内容を確認してください。")
-
         # 追加資料を読み込む
         reference_materials = load_reference_materials(args.references_dir)
 
         # トークン使用量の警告
-        if reference_materials and HAS_TIKTOKEN:
-            try:
-                try:
-                    # モデル名から自動でエンコーディング取得
-                    encoding = tiktoken.encoding_for_model(args.model)
-                except KeyError:
-                    # モデル名のマッピングに失敗した場合は cl100k_base にフォールバック
-                    logger.warning(
-                        "モデル '%s' のエンコーディングが取得できなかったため "
-                        "'cl100k_base' を使用します。",
-                        args.model,
-                    )
-                    encoding = tiktoken.get_encoding("cl100k_base")
-
-                estimated_tokens = len(encoding.encode(reference_materials))
-
-            except (KeyError, ValueError) as exc:
-                # エンコーディングが未知 / プラグイン不足などで失敗した場合
+        if reference_materials:
+            estimated_tokens = _estimate_token_count(reference_materials, args.model)
+            if estimated_tokens > 10000:
                 logger.warning(
-                    "tiktoken によるトークン見積もりに失敗したため、概算値を使用します: %s",
-                    exc,
+                    "追加資料のトークン数が大きい可能性があります（推定: {:,}トークン）。",
+                    estimated_tokens,
                 )
-                estimated_tokens = len(reference_materials) // 4
 
-        else:
-            # tiktoken が使えない場合の概算
-            estimated_tokens = len(reference_materials) // 4
+        # 全メッセージを時間順に並べる
+        logger.info("全メッセージを時間順に並べています...")
+        sorted_messages_df = build_global_transcript_df(messages_df)
+        logger.info("全 {} 件のメッセージを処理対象としました", len(sorted_messages_df))
 
-        if estimated_tokens > 10000:
-            logger.warning(
-                f"追加資料のトークン数が大きい可能性があります（推定: {estimated_tokens:,}トークン）。"
-                f"この資料は各セッション分析とクロスセッション分析で繰り返し送信されます。"
-            )
+        # メッセージをチャンクに分割
+        logger.info("メッセージをチャンクに分割しています...")
+        chunks = chunk_messages_for_llm(
+            sorted_messages_df,
+            max_tokens_per_chunk=DEFAULT_MAX_TOKENS_PER_CHUNK,
+            model=args.model,
+        )
+
+        if not chunks:
+            raise RuntimeError("分析対象のメッセージが見つかりませんでした。CSVの内容を確認してください。")
 
         llm = LLMClient(model=args.model)
 
-        per_session_results: List[str] = []
-        for session_id in selected_ids:
-            session_df = grouped_messages.get(str(session_id))
-            if session_df is None:
-                continue
-            transcript = build_session_transcript(session_df)
-            user_prompt = build_session_prompt(str(session_id), transcript, reference_materials)
-            session_analysis = llm.chat_completion(
+        # 各チャンクを分析
+        chunk_summaries: List[str] = []
+        for i, chunk_text in enumerate(chunks):
+            logger.info("チャンク {}/{} を分析中...", i + 1, len(chunks))
+            chunk_prompt = build_chunk_analysis_prompt(
+                chunk_index=i,
+                total_chunks=len(chunks),
+                chunk_text=chunk_text,
+                reference_materials="",  # チャンク分析では参考資料を含めない
+            )
+            chunk_analysis = llm.chat_completion(
                 system_prompt=(
                     "あなたはリーガルテック領域の調査アナリストです。"
                     "インタビュー会話から立法・制度設計に影響する論点を掘り起こしてください。"
                 ),
-                user_prompt=user_prompt,
+                user_prompt=chunk_prompt,
             )
-            per_session_results.append(session_analysis)
+            chunk_summaries.append(chunk_analysis)
 
-        cross_prompt = build_cross_session_prompt(per_session_results, reference_materials)
-        cross_response = llm.chat_completion(
+        # 全体統合レポートを生成
+        logger.info("チャンク分析結果を統合して全体レポートを生成中...")
+        global_prompt = build_global_summary_prompt(chunk_summaries, reference_materials)
+        global_response = llm.chat_completion(
             system_prompt=(
                 "あなたは政策立案担当者向けに論点を整理する専門家です。"
-                "複数のインタビュー要約をもとに、制度の隙間や暗黙の前提を明確化してください。"
+                "複数のチャンク分析をもとに、制度の隙間や暗黙の前提を明確化してください。"
             ),
-            user_prompt=cross_prompt,
+            user_prompt=global_prompt,
         )
 
-        overall_summary = extract_tagged_section(cross_response, "overall_summary")
-        overlooked_points = extract_tagged_section(cross_response, "overlooked_points")
-        suggestions = extract_tagged_section(cross_response, "suggestions")
+        overall_summary = extract_tagged_section(global_response, "overall_summary")
+        overlooked_points = extract_tagged_section(global_response, "overlooked_points")
+        suggestions = extract_tagged_section(global_response, "suggestions")
 
         report = render_report(
             overall_summary=overall_summary,
             overlooked_points=overlooked_points,
             suggestions=suggestions,
-            per_session_sections=per_session_results,
         )
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
