@@ -725,7 +725,7 @@ def main() -> None:
 
         # セッションIDのリストを取得
         unique_session_ids = sorted(
-            messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
+            messages_df[SESSION_ID_COL].dropna().astype(str).unique()
         )
         logger.info("分析対象のセッション数: {}", len(unique_session_ids))
 
