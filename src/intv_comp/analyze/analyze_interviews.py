@@ -7,11 +7,12 @@ AIインタビューログのCSVを読み込み、全メッセージをグロー
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import random
 import re
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Set, Tuple, cast
 from urllib.parse import quote
 
 import pandas as pd
@@ -221,7 +222,7 @@ def chunk_messages_with_session_tracking(
     """
     chunks: List[Dict[str, object]] = []
     current_chunk_text = ""
-    current_session_ids: set[str] = set()
+    current_session_ids: Set[str] = set()
 
     for _, row in sorted_messages_df.iterrows():
         timestamp = row.get(TIMESTAMP_COL, "")
@@ -292,7 +293,7 @@ def compress_chunk_summaries(
     llm: LLMClient,
     model: str,
     max_tokens_for_global_prompt: int = DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT,
-) -> tuple[List[str], List[List[str]]]:
+) -> Tuple[List[str], List[List[str]]]:
     """全体統合プロンプトに渡すチャンクサマリを階層的に圧縮する。
 
     - chunk_summaries 全体をそのまま連結したときの推定トークン数が
@@ -350,7 +351,7 @@ def compress_chunk_summaries(
                 continue
 
             # バッチに対応するセッションIDを集約
-            batch_sessions: set[str] = set()
+            batch_sessions: Set[str] = set()
             for j in range(i, min(i + batch_size, len(current_session_ids))):
                 if j < len(current_session_ids):
                     batch_sessions.update(current_session_ids[j])
@@ -629,7 +630,9 @@ def format_session_references(text: str) -> str:
         for sid in session_ids:
             if sid:
                 url = f"https://depth-interview-ai.vercel.app/report/{quote(sid, safe='')}"
-                links.append(f'<a href="{url}">{sid}</a>')
+                # HTML エスケープして XSS を防止
+                escaped_sid = html.escape(sid)
+                links.append(f'<a href="{url}">{escaped_sid}</a>')
         return f"{prefix}{', '.join(links)}"
     
     # 参照元セッション: または 参照セッション: の後に続くセッションIDリストを検出
@@ -811,7 +814,7 @@ def main() -> None:
         chunk_session_ids: List[List[str]] = []
         for i, chunk_info in enumerate(chunk_data):
             chunk_text = str(chunk_info["text"])
-            session_ids_list = chunk_info.get("session_ids", [])
+            session_ids_list = cast(List[str], chunk_info.get("session_ids", []))
             chunk_session_ids.append([str(sid) for sid in session_ids_list])
             
             logger.info("チャンク {}/{} を分析中...", i + 1, len(chunk_data))
