@@ -138,7 +138,7 @@ def calculate_relevance_score(message_content: str) -> float:
             # 漢字キーワードの前後に漢字がないことを確認（複合語を避けるため）
             # 例: "法案"は"提案"にマッチしないようにする
             pattern = re.compile(
-                r"(?<![\u4e00-\u9fff])" + re.escape(keyword_lower) + r"(?![\u4e00-\u9fff])"
+                r"(?<![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])" + re.escape(keyword_lower) + r"(?![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
             )
             if pattern.search(content_lower):
                 matched_keywords.append(keyword)
