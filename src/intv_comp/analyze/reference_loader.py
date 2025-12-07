@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from intv_comp.logger import logger
 
@@ -200,13 +200,27 @@ def load_reference_materials(references_dir: Path) -> str:
     Returns:
         読み込んだ全ての資料を結合したテキスト。資料がない場合は空文字列。
     """
+    materials, _ = load_reference_materials_with_filenames(references_dir)
+    return materials
+
+
+def load_reference_materials_with_filenames(references_dir: Path) -> Tuple[str, List[str]]:
+    """
+    指定されたディレクトリから追加資料を読み込み、結合したテキストとファイル名リストを返す。
+
+    Args:
+        references_dir: 追加資料が格納されているディレクトリのパス
+
+    Returns:
+        (結合したテキスト, ファイル名のリスト) のタプル。資料がない場合は空文字列と空リスト。
+    """
     if not references_dir.exists():
         logger.info(f"追加資料のディレクトリが存在しません: {references_dir}")
-        return ""
+        return "", []
 
     if not references_dir.is_dir():
         logger.warning(f"指定されたパスはディレクトリではありません: {references_dir}")
-        return ""
+        return "", []
 
     # 最大ファイルサイズを環境変数から取得（デフォルト: 30MB）
     try:
@@ -234,10 +248,11 @@ def load_reference_materials(references_dir: Path) -> str:
 
     if not reference_files:
         logger.info(f"追加資料が見つかりませんでした: {references_dir}")
-        return ""
+        return "", []
 
     # ファイルを読み込んで結合
     materials: List[str] = []
+    loaded_filenames: List[str] = []
     for file_path in sorted(reference_files):
         try:
             # ファイルサイズをチェック
@@ -259,6 +274,7 @@ def load_reference_materials(references_dir: Path) -> str:
             content = processor(file_path)
             if content and content.strip():
                 materials.append(f"# {file_path.name}\n\n{content}")
+                loaded_filenames.append(file_path.name)
                 logger.info(f"追加資料を読み込みました: {file_path.name}")
             else:
                 logger.warning(f"ファイルからテキストを抽出できませんでした: {file_path.name}")
@@ -268,8 +284,8 @@ def load_reference_materials(references_dir: Path) -> str:
 
     if not materials:
         logger.info("読み込み可能な追加資料がありませんでした")
-        return ""
+        return "", []
 
     combined_text = "\n\n---\n\n".join(materials)
     logger.info(f"{len(materials)}件の追加資料を読み込みました")
-    return combined_text
+    return combined_text, loaded_filenames
