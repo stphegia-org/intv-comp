@@ -521,10 +521,33 @@ def extract_tagged_section(text: str, tag: str) -> str:
     return ""
 
 
+def build_session_urls_section(session_ids: List[str]) -> str:
+    """セッションURLのMarkdownセクションを生成する。
+
+    Args:
+        session_ids: セッションIDのリスト
+
+    Returns:
+        セッションURLのMarkdownセクション文字列
+    """
+    if not session_ids:
+        return ""
+
+    lines = ["## 0. 分析対象セッション一覧", ""]
+    for session_id in session_ids:
+        url = f"https://depth-interview-ai.vercel.app/report/{session_id}"
+        lines.append(f"- **セッションID**: `{session_id}`")
+        lines.append(f"  - 元インタビューセッション: [depth-interview-aiで開く]({url})")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def render_report(
     overall_summary: str,
     overlooked_points: str,
     suggestions: str,
+    session_ids: List[str] | None = None,
 ) -> str:
     """Markdownレポート全文を生成する。
 
@@ -532,14 +555,19 @@ def render_report(
         overall_summary: 全体サマリー
         overlooked_points: 見落とされがちなポイント
         suggestions: 改善提案・示唆
+        session_ids: セッションIDのリスト（オプション）
 
     Returns:
         レポートのMarkdown文字列
     """
+    session_section = ""
+    if session_ids:
+        session_section = build_session_urls_section(session_ids) + "\n"
+
     return f"""
 # AIインタビューログ分析レポート
 
-## 1. 全体サマリー
+{session_section}## 1. 全体サマリー
 {overall_summary}
 
 ## 2. 法整備の観点で見落とされがちなポイント
@@ -695,10 +723,17 @@ def main() -> None:
         overlooked_points = extract_tagged_section(global_response, "overlooked_points")
         suggestions = extract_tagged_section(global_response, "suggestions")
 
+        # セッションIDのリストを取得
+        unique_session_ids = sorted(
+            messages_df[SESSION_ID_COL].dropna().astype(str).unique().tolist()
+        )
+        logger.info("分析対象のセッション数: {}", len(unique_session_ids))
+
         report = render_report(
             overall_summary=overall_summary,
             overlooked_points=overlooked_points,
             suggestions=suggestions,
+            session_ids=unique_session_ids,
         )
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
