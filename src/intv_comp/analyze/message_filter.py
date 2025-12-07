@@ -82,14 +82,15 @@ BILL_RELATED_KEYWORDS = [
 ]
 
 # キーワードマッチング用の事前コンパイルされた正規表現パターン
-# パフォーマンス向上のため、各キーワードのパターンを事前にコンパイル
-_KEYWORD_PATTERNS: list[tuple[str, re.Pattern[str] | None]] = []
+# パフォーマンス向上のため、各キーワードのパターンと小文字版を事前にコンパイル
+# タプル形式: (元のキーワード, 小文字版, パターン)
+_KEYWORD_PATTERNS: list[tuple[str, str, re.Pattern[str] | None]] = []
 
 
 def _build_keyword_patterns() -> None:
     """キーワードマッチング用のパターンを構築する（初回のみ実行）。"""
     global _KEYWORD_PATTERNS
-    if _KEYWORD_PATTERNS:
+    if len(_KEYWORD_PATTERNS) > 0:
         return
 
     for keyword in BILL_RELATED_KEYWORDS:
@@ -97,7 +98,7 @@ def _build_keyword_patterns() -> None:
 
         # 特殊文字を含むキーワード（B/L, bill of lading など）は単純な部分一致なのでパターン不要
         if "/" in keyword_lower or " " in keyword_lower:
-            _KEYWORD_PATTERNS.append((keyword, None))
+            _KEYWORD_PATTERNS.append((keyword, keyword_lower, None))
         # 短い日本語キーワード（2-3文字）は単語境界を考慮したパターン
         elif len(keyword_lower) <= 3 and any("\u4e00" <= c <= "\u9fff" for c in keyword_lower):
             pattern = re.compile(
@@ -105,16 +106,16 @@ def _build_keyword_patterns() -> None:
                 + re.escape(keyword_lower)
                 + r"(?![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
             )
-            _KEYWORD_PATTERNS.append((keyword, pattern))
+            _KEYWORD_PATTERNS.append((keyword, keyword_lower, pattern))
         # 短い英数字キーワードは単語境界を考慮したパターン
         elif len(keyword_lower) <= 3:
             pattern = re.compile(
                 r"(?<![a-zA-Z0-9])" + re.escape(keyword_lower) + r"(?![a-zA-Z0-9])"
             )
-            _KEYWORD_PATTERNS.append((keyword, pattern))
+            _KEYWORD_PATTERNS.append((keyword, keyword_lower, pattern))
         # 長いキーワードは通常の部分一致なのでパターン不要
         else:
-            _KEYWORD_PATTERNS.append((keyword, None))
+            _KEYWORD_PATTERNS.append((keyword, keyword_lower, None))
 
 
 # モジュールロード時にパターンを構築
@@ -164,9 +165,7 @@ def calculate_relevance_score(message_content: str) -> float:
 
     # パターン3: キーワードマッチングによるスコアリング（事前コンパイルされたパターンを使用）
     matched_keywords: list[str] = []
-    for keyword, kw_pattern in _KEYWORD_PATTERNS:
-        keyword_lower: str = keyword.lower()
-
+    for keyword, keyword_lower, kw_pattern in _KEYWORD_PATTERNS:
         if kw_pattern is None:
             # パターンなし = 単純な部分一致
             if keyword_lower in content_lower:
