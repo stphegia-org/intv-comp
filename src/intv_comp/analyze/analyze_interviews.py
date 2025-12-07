@@ -786,7 +786,16 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_RELEVANCE_THRESHOLD,
         help=f"メッセージフィルタリングの閾値（0.0～1.0、デフォルト: {DEFAULT_RELEVANCE_THRESHOLD}）",
     )
-    return parser.parse_args()
+
+    args = parser.parse_args()
+
+    # relevance-threshold の妥当性チェック
+    if not 0.0 <= args.relevance_threshold <= 1.0:
+        parser.error(
+            f"--relevance-threshold は 0.0～1.0 の範囲で指定してください（指定値: {args.relevance_threshold}）"
+        )
+
+    return args
 
 
 def main() -> None:

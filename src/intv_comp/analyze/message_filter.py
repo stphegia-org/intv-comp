@@ -81,6 +81,45 @@ BILL_RELATED_KEYWORDS = [
     "無効",
 ]
 
+# キーワードマッチング用の事前コンパイルされた正規表現パターン
+# パフォーマンス向上のため、各キーワードのパターンを事前にコンパイル
+_KEYWORD_PATTERNS: list[tuple[str, re.Pattern[str] | None]] = []
+
+
+def _build_keyword_patterns() -> None:
+    """キーワードマッチング用のパターンを構築する（初回のみ実行）。"""
+    global _KEYWORD_PATTERNS
+    if _KEYWORD_PATTERNS:
+        return
+
+    for keyword in BILL_RELATED_KEYWORDS:
+        keyword_lower = keyword.lower()
+
+        # 特殊文字を含むキーワード（B/L, bill of lading など）は単純な部分一致なのでパターン不要
+        if "/" in keyword_lower or " " in keyword_lower:
+            _KEYWORD_PATTERNS.append((keyword, None))
+        # 短い日本語キーワード（2-3文字）は単語境界を考慮したパターン
+        elif len(keyword_lower) <= 3 and any("\u4e00" <= c <= "\u9fff" for c in keyword_lower):
+            pattern = re.compile(
+                r"(?<![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
+                + re.escape(keyword_lower)
+                + r"(?![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
+            )
+            _KEYWORD_PATTERNS.append((keyword, pattern))
+        # 短い英数字キーワードは単語境界を考慮したパターン
+        elif len(keyword_lower) <= 3:
+            pattern = re.compile(
+                r"(?<![a-zA-Z0-9])" + re.escape(keyword_lower) + r"(?![a-zA-Z0-9])"
+            )
+            _KEYWORD_PATTERNS.append((keyword, pattern))
+        # 長いキーワードは通常の部分一致なのでパターン不要
+        else:
+            _KEYWORD_PATTERNS.append((keyword, None))
+
+
+# モジュールロード時にパターンを構築
+_build_keyword_patterns()
+
 # 無関係と判断されやすいパターン（これらが主な内容の場合は低スコア）
 # 事前にコンパイルしてパフォーマンスを向上
 IRRELEVANT_PATTERNS = [
@@ -123,36 +162,18 @@ def calculate_relevance_score(message_content: str) -> float:
     if len(content) < 5:
         return 0.2
 
-    # パターン3: キーワードマッチングによるスコアリング
-    matched_keywords = []
-    for keyword in BILL_RELATED_KEYWORDS:
-        keyword_lower = keyword.lower()
+    # パターン3: キーワードマッチングによるスコアリング（事前コンパイルされたパターンを使用）
+    matched_keywords: list[str] = []
+    for keyword, kw_pattern in _KEYWORD_PATTERNS:
+        keyword_lower: str = keyword.lower()
 
-        # 特殊文字を含むキーワード（B/L, bill of lading など）は単純な部分一致
-        if "/" in keyword_lower or " " in keyword_lower:
+        if kw_pattern is None:
+            # パターンなし = 単純な部分一致
             if keyword_lower in content_lower:
-                matched_keywords.append(keyword)
-        # 短い日本語キーワード（2-3文字）は単語境界を考慮
-        # ただし、日本語には単語境界がないので、前後が漢字でないことをチェック
-        elif len(keyword_lower) <= 3 and any("\u4e00" <= c <= "\u9fff" for c in keyword_lower):
-            # 漢字キーワードの前後に漢字がないことを確認（複合語を避けるため）
-            # 例: "法案"は"提案"にマッチしないようにする
-            pattern = re.compile(
-                r"(?<![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])" + re.escape(keyword_lower) + r"(?![\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
-            )
-            if pattern.search(content_lower):
-                matched_keywords.append(keyword)
-        # 短い英数字キーワードは単語境界を考慮
-        elif len(keyword_lower) <= 3:
-            # 英数字の場合は前後が英数字でないことを確認
-            pattern = re.compile(
-                r"(?<![a-zA-Z0-9])" + re.escape(keyword_lower) + r"(?![a-zA-Z0-9])"
-            )
-            if pattern.search(content_lower):
                 matched_keywords.append(keyword)
         else:
-            # 長いキーワードは通常の部分一致でOK
-            if keyword_lower in content_lower:
+            # 事前コンパイルされたパターンでマッチング
+            if kw_pattern.search(content_lower):
                 matched_keywords.append(keyword)
 
     # マッチしたキーワード数に応じてスコアを計算
@@ -252,29 +273,3 @@ def filter_messages_by_relevance(
             )
 
     return filtered_df
-
-
-def get_filtering_statistics(
-    original_count: int,
-    filtered_count: int,
-) -> dict[str, int | float]:
-    """フィルタリング統計情報を取得する。
-
-    Args:
-        original_count: フィルタリング前のメッセージ数
-        filtered_count: フィルタリング後のメッセージ数
-
-    Returns:
-        統計情報の辞書
-    """
-    excluded_count = original_count - filtered_count
-    excluded_percentage = (
-        round(excluded_count / original_count * 100, 1) if original_count > 0 else 0.0
-    )
-
-    return {
-        "original_count": original_count,
-        "filtered_count": filtered_count,
-        "excluded_count": excluded_count,
-        "excluded_percentage": excluded_percentage,
-    }
