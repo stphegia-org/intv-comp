@@ -811,11 +811,8 @@ def main() -> None:
         chunk_session_ids: List[List[str]] = []
         for i, chunk_info in enumerate(chunk_data):
             chunk_text = str(chunk_info["text"])
-            session_ids = chunk_info.get("session_ids", [])
-            if isinstance(session_ids, list):
-                chunk_session_ids.append([str(sid) for sid in session_ids])
-            else:
-                chunk_session_ids.append([])
+            session_ids_list = chunk_info.get("session_ids", [])
+            chunk_session_ids.append([str(sid) for sid in session_ids_list])
             
             logger.info("チャンク {}/{} を分析中...", i + 1, len(chunk_data))
             chunk_prompt = build_chunk_analysis_prompt(
