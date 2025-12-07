@@ -42,6 +42,10 @@ DEFAULT_MAX_TOKENS_PER_CHUNK = int(os.getenv("MAX_TOKENS_PER_CHUNK", "8000"))
 # 全体統合プロンプトに含めるテキストのトークン上限（TPM 制限に収まるようにマージンを取る）
 DEFAULT_MAX_TOKENS_FOR_GLOBAL_PROMPT = int(os.getenv("MAX_TOKENS_FOR_GLOBAL_PROMPT", "24000"))
 
+# チャンクサマリ圧縮の設定
+DEFAULT_COMPRESSION_MAX_ROUNDS = 2  # 圧縮ラウンドの上限
+DEFAULT_COMPRESSION_BATCH_SIZE = 10  # 1回の圧縮で処理するサマリ数
+
 
 def _get_env_var(env_var: str) -> str:
     """環境変数を取得する。存在しない場合は例外を発生させる。"""
@@ -278,8 +282,8 @@ def compress_chunk_summaries(
     )
 
     current = chunk_summaries
-    max_rounds = 2  # 安全のため圧縮ラウンド数に上限を設ける
-    batch_size = 10
+    max_rounds = DEFAULT_COMPRESSION_MAX_ROUNDS
+    batch_size = DEFAULT_COMPRESSION_BATCH_SIZE
 
     for round_index in range(max_rounds):
         if len(current) == 1:
