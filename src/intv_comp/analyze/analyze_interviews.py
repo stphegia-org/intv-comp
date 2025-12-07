@@ -775,6 +775,17 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_REFERENCES_DIR,
         help="追加資料（参考資料）が格納されているディレクトリのパス",
     )
+    parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="法案・業務関連度によるメッセージフィルタリングを無効化する",
+    )
+    parser.add_argument(
+        "--relevance-threshold",
+        type=float,
+        default=DEFAULT_RELEVANCE_THRESHOLD,
+        help=f"メッセージフィルタリングの閾値（0.0～1.0、デフォルト: {DEFAULT_RELEVANCE_THRESHOLD}）",
+    )
     return parser.parse_args()
 
 
@@ -824,6 +835,8 @@ def main() -> None:
             sorted_messages_df,
             max_tokens_per_chunk=DEFAULT_MAX_TOKENS_PER_CHUNK,
             model=args.model,
+            filter_irrelevant=not args.no_filter,
+            relevance_threshold=args.relevance_threshold,
         )
 
         if not chunk_data:

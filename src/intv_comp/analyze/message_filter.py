@@ -82,12 +82,13 @@ BILL_RELATED_KEYWORDS = [
 ]
 
 # 無関係と判断されやすいパターン（これらが主な内容の場合は低スコア）
+# 事前にコンパイルしてパフォーマンスを向上
 IRRELEVANT_PATTERNS = [
     # 単純な挨拶や相槌のみ
-    r"^(はい|いいえ|うん|ええ|そう|なるほど|わかりました|了解|OK)$",
-    r"^(あ+|え+|お+|う+)$",  # 「ああああ」など
+    re.compile(r"^(はい|いいえ|うん|ええ|そう|なるほど|わかりました|了解|OK)$"),
+    re.compile(r"^(あ+|え+|お+|う+)$"),  # 「ああああ」など
     # 明確に知らない・わからないという発言
-    r"(知らない|分からない|わからない|聞いたことがない|初めて聞)",
+    re.compile(r"(知らない|分からない|わからない|聞いたことがない|初めて聞)"),
 ]
 
 
@@ -110,10 +111,10 @@ def calculate_relevance_score(message_content: str) -> float:
 
     # パターン1: 明確に無関係なパターンに該当する場合は低スコア
     for pattern in IRRELEVANT_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
+        if pattern.search(content):
             logger.debug(
                 "無関係パターンに該当: pattern={}, content={}",
-                pattern,
+                pattern.pattern,
                 content[:50],
             )
             return 0.1
@@ -125,8 +126,32 @@ def calculate_relevance_score(message_content: str) -> float:
     # パターン3: キーワードマッチングによるスコアリング
     matched_keywords = []
     for keyword in BILL_RELATED_KEYWORDS:
-        if keyword.lower() in content_lower:
-            matched_keywords.append(keyword)
+        keyword_lower = keyword.lower()
+
+        # 特殊文字を含むキーワード（B/L, bill of lading など）は単純な部分一致
+        if "/" in keyword_lower or " " in keyword_lower:
+            if keyword_lower in content_lower:
+                matched_keywords.append(keyword)
+        # 短い日本語キーワード（2-3文字）は単語境界を考慮
+        # ただし、日本語には単語境界がないので、前後が漢字でないことをチェック
+        elif len(keyword_lower) <= 3 and any("\u4e00" <= c <= "\u9fff" for c in keyword_lower):
+            # 漢字キーワードの前後に漢字がないことを確認（複合語を避けるため）
+            # 例: "法案"は"提案"にマッチしないようにする
+            pattern = re.compile(r"(?<![一-龯])" + re.escape(keyword_lower) + r"(?![一-龯])")
+            if pattern.search(content_lower):
+                matched_keywords.append(keyword)
+        # 短い英数字キーワードは単語境界を考慮
+        elif len(keyword_lower) <= 3:
+            # 英数字の場合は前後が英数字でないことを確認
+            pattern = re.compile(
+                r"(?<![a-zA-Z0-9])" + re.escape(keyword_lower) + r"(?![a-zA-Z0-9])"
+            )
+            if pattern.search(content_lower):
+                matched_keywords.append(keyword)
+        else:
+            # 長いキーワードは通常の部分一致でOK
+            if keyword_lower in content_lower:
+                matched_keywords.append(keyword)
 
     # マッチしたキーワード数に応じてスコアを計算
     # 0個: 0.25, 1個: 0.4, 2個: 0.6, 3個以上: 0.8～1.0
@@ -205,7 +230,9 @@ def filter_messages_by_relevance(
 
     # 除外されたメッセージの詳細をデバッグログに出力
     if excluded_messages > 0:
-        excluded_df = messages_df[relevance_scores <= threshold]
+        excluded_df = messages_df[relevance_scores <= threshold].copy()
+        # 除外されたメッセージのスコアも一緒に保存
+        excluded_scores = relevance_scores[relevance_scores <= threshold]
         logger.debug("除外されたメッセージ数: {}", excluded_messages)
 
         # 最初の数件を詳細ログ出力（デバッグ用）
@@ -213,7 +240,7 @@ def filter_messages_by_relevance(
         for idx in range(sample_size):
             row = excluded_df.iloc[idx]
             content = str(row[content_col])[:100]  # 最初の100文字
-            score = relevance_scores.iloc[excluded_df.index[idx]]
+            score = excluded_scores.iloc[idx]
             logger.debug(
                 "除外メッセージ例 {}/{}: score={:.2f}, content={}",
                 idx + 1,
