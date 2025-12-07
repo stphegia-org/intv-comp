@@ -143,6 +143,10 @@ def calculate_relevance_score(message_content: str) -> float:
         - 1.0に近いほど関連度が高い
         - 0.0に近いほど無関係
     """
+    # 文字列型でない場合（NaNやNoneなど）は0.0を返す
+    if not isinstance(message_content, str):
+        return 0.0
+    
     if not message_content or not message_content.strip():
         return 0.0
 
