@@ -270,13 +270,13 @@ def compress_chunk_summaries(
     if total_tokens <= max_tokens_for_global_prompt:
         # そもそも十分小さい場合はそのまま返す
         logger.info(
-            "全体統合プロンプト用チャンクサマリは推定 %s トークンのため圧縮不要です",
+            "全体統合プロンプト用チャンクサマリは推定 {} トークンのため圧縮不要です",
             total_tokens,
         )
         return chunk_summaries
 
     logger.warning(
-        "全体統合プロンプト用チャンクサマリが大きすぎます（推定: %s トークン）。"
+        "全体統合プロンプト用チャンクサマリが大きすぎます（推定: {} トークン）。"
         " 階層的に圧縮を行います。",
         total_tokens,
     )
@@ -327,7 +327,7 @@ def compress_chunk_summaries(
         joined = "\n\n".join(current)
         total_tokens = _estimate_token_count(joined, model=model)
         logger.info(
-            "チャンクサマリ圧縮ラウンド %s 終了: 要素数=%s, 推定トークン数=%s",
+            "チャンクサマリ圧縮ラウンド {} 終了: 要素数={}, 推定トークン数={}",
             round_index + 1,
             len(current),
             total_tokens,
