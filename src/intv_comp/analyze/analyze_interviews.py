@@ -562,7 +562,7 @@ def render_report(
     """
     session_section = ""
     if session_ids:
-        session_section = build_session_urls_section(session_ids) + "\n"
+        session_section = build_session_urls_section(session_ids) + "\n\n"
 
     return f"""
 # AIインタビューログ分析レポート
