@@ -12,6 +12,7 @@ import random
 import re
 from pathlib import Path
 from typing import Dict, List, Sequence
+from urllib.parse import quote
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -535,7 +536,7 @@ def build_session_urls_section(session_ids: List[str]) -> str:
 
     lines = ["## 0. 分析対象セッション一覧", ""]
     for session_id in session_ids:
-        url = f"https://depth-interview-ai.vercel.app/report/{session_id}"
+        url = f"https://depth-interview-ai.vercel.app/report/{quote(session_id, safe='')}"
         lines.append(f"- **セッションID**: `{session_id}`")
         lines.append(f"  - 元インタビューセッション: [depth-interview-aiで開く]({url})")
         lines.append("")
