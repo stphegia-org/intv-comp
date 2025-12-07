@@ -159,7 +159,7 @@ def calculate_relevance_score(message_content: str) -> float:
     # 0個: 0.25, 1個: 0.4, 2個: 0.6, 3個以上: 0.8～1.0
     keyword_count = len(matched_keywords)
     if keyword_count == 0:
-        base_score = 0.25
+        base_score = 0.1
     elif keyword_count == 1:
         base_score = 0.4
     elif keyword_count == 2:
