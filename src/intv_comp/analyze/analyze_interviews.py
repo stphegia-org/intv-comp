@@ -26,6 +26,10 @@ except ImportError:
     HAS_TIKTOKEN = False
 
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
+from intv_comp.analyze.message_filter import (
+    DEFAULT_RELEVANCE_THRESHOLD,
+    filter_messages_by_relevance,
+)
 from intv_comp.analyze.reference_loader import load_reference_materials_with_filenames
 from intv_comp.logger import logger, setup_logger
 
@@ -209,6 +213,8 @@ def chunk_messages_with_session_tracking(
     sorted_messages_df: pd.DataFrame,
     max_tokens_per_chunk: int,
     model: str = DEFAULT_MODEL,
+    filter_irrelevant: bool = True,
+    relevance_threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
 ) -> List[Dict[str, object]]:
     """タイムスタンプ順のメッセージをトークン上限を考慮してチャンクに分割し、セッションIDを追跡する。
 
@@ -216,15 +222,39 @@ def chunk_messages_with_session_tracking(
         sorted_messages_df: タイムスタンプ順にソートされたメッセージDataFrame
         max_tokens_per_chunk: 1チャンクあたりの最大トークン数
         model: 使用するモデル名（トークン推定に使用）
+        filter_irrelevant: 法案・業務と無関係なメッセージを除外するかどうか
+        relevance_threshold: 関連度の閾値（この値以下のメッセージは除外される）
 
     Returns:
         チャンクごとの辞書リスト。各辞書は 'text' (str) と 'session_ids' (List[str]) を含む。
     """
+    # フィルタリングを適用
+    if filter_irrelevant:
+        logger.info(
+            "法案・業務関連度によるメッセージフィルタリングを開始します（閾値: {:.2f}）",
+            relevance_threshold,
+        )
+        filtered_df = filter_messages_by_relevance(
+            sorted_messages_df,
+            threshold=relevance_threshold,
+            content_col=MESSAGE_CONTENT_COL,
+        )
+    else:
+        filtered_df = sorted_messages_df
+        logger.info("メッセージフィルタリングはスキップされました")
+
+    # フィルタリング後のデータフレームが空の場合
+    if len(filtered_df) == 0:
+        logger.warning(
+            "フィルタリング後のメッセージが0件になりました。空のチャンクリストを返します。"
+        )
+        return []
+
     chunks: List[Dict[str, object]] = []
     current_chunk_text = ""
     current_session_ids: Set[str] = set()
 
-    for _, row in sorted_messages_df.iterrows():
+    for _, row in filtered_df.iterrows():
         timestamp = row.get(TIMESTAMP_COL, "")
         role = row.get(ROLE_COL, "")
         message = row.get(MESSAGE_CONTENT_COL, "")
@@ -238,15 +268,11 @@ def chunk_messages_with_session_tracking(
         if line_tokens > max_tokens_per_chunk:
             # 現在のチャンクがあれば確定
             if current_chunk_text:
-                chunks.append({
-                    "text": current_chunk_text,
-                    "session_ids": sorted(list(current_session_ids))
-                })
+                chunks.append(
+                    {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+                )
             # 大きなメッセージを単独で1チャンクとして追加
-            chunks.append({
-                "text": line,
-                "session_ids": [session_id]
-            })
+            chunks.append({"text": line, "session_ids": [session_id]})
             current_chunk_text = ""
             current_session_ids = set()
             logger.warning(
@@ -261,10 +287,9 @@ def chunk_messages_with_session_tracking(
             current_tokens = _estimate_token_count(current_chunk_text, model)
             if current_tokens + line_tokens > max_tokens_per_chunk:
                 # 現在のチャンクを確定して次のチャンクへ
-                chunks.append({
-                    "text": current_chunk_text,
-                    "session_ids": sorted(list(current_session_ids))
-                })
+                chunks.append(
+                    {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+                )
                 current_chunk_text = line
                 current_session_ids = {session_id}
             else:
@@ -278,10 +303,9 @@ def chunk_messages_with_session_tracking(
 
     # 最後のチャンクを追加
     if current_chunk_text:
-        chunks.append({
-            "text": current_chunk_text,
-            "session_ids": sorted(list(current_session_ids))
-        })
+        chunks.append(
+            {"text": current_chunk_text, "session_ids": sorted(list(current_session_ids))}
+        )
 
     logger.info("全メッセージを {} 個のチャンクに分割しました", len(chunks))
     return chunks
@@ -302,14 +326,14 @@ def compress_chunk_summaries(
     - バッチ要約を 1〜2 ラウンド行い、十分に小さくなったところで終了する。
     - 情報を完全には保持できないが、「全体像を掴む」という用途には
       影響が少ないよう、要点を残した圧縮を行う。
-    
+
     Args:
         chunk_summaries: チャンクサマリのリスト
         chunk_session_ids: 各チャンクに対応するセッションIDのリスト
         llm: LLMClient インスタンス
         model: 使用するモデル名
         max_tokens_for_global_prompt: プロンプトの最大トークン数
-    
+
     Returns:
         (圧縮されたサマリのリスト, 対応するセッションIDのリスト) のタプル
     """
@@ -539,7 +563,7 @@ def build_global_summary_prompt(
             sessions_str = ", ".join(chunk_session_ids[i])
             session_info = f"\n**参照セッション**: {sessions_str}\n"
         joined_parts.append(f"### チャンク {i + 1} の分析結果{session_info}\n{summary}")
-    
+
     joined = "\n\n---\n\n".join(joined_parts)
 
     # 参照資料情報を追加
@@ -608,17 +632,18 @@ def extract_tagged_section(text: str, tag: str) -> str:
 
 def format_session_references(text: str) -> str:
     """テキスト内のセッション参照を検出し、URLリンクに変換する。
-    
+
     以下のパターンを検出してHTMLリンクに変換する：
     - 参照元セッション: S001, S014
     - 参照セッション: S001, S002
-    
+
     Args:
         text: 変換対象のテキスト
-    
+
     Returns:
         URLリンクに変換されたテキスト
     """
+
     def replace_session_ids(match: re.Match[str]) -> str:
         """セッションIDリストをHTMLリンクに変換する。"""
         prefix = match.group(1)
@@ -634,11 +659,10 @@ def format_session_references(text: str) -> str:
                 escaped_sid = html.escape(sid)
                 links.append(f'<a href="{url}">{escaped_sid}</a>')
         return f"{prefix}{', '.join(links)}"
-    
+
     # 参照元セッション: または 参照セッション: の後に続くセッションIDリストを検出
     pattern = re.compile(
-        r"(参照(?:元)?セッション:\s*)([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)",
-        re.MULTILINE
+        r"(参照(?:元)?セッション:\s*)([A-Za-z0-9]+(?:\s*,\s*[A-Za-z0-9]+)*)", re.MULTILINE
     )
     return pattern.sub(replace_session_ids, text)
 
@@ -751,7 +775,27 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_REFERENCES_DIR,
         help="追加資料（参考資料）が格納されているディレクトリのパス",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="法案・業務関連度によるメッセージフィルタリングを無効化する",
+    )
+    parser.add_argument(
+        "--relevance-threshold",
+        type=float,
+        default=DEFAULT_RELEVANCE_THRESHOLD,
+        help=f"メッセージフィルタリングの閾値（0.0～1.0、デフォルト: {DEFAULT_RELEVANCE_THRESHOLD}）",
+    )
+
+    args = parser.parse_args()
+
+    # relevance-threshold の妥当性チェック
+    if not 0.0 <= args.relevance_threshold <= 1.0:
+        parser.error(
+            f"--relevance-threshold は 0.0～1.0 の範囲で指定してください（指定値: {args.relevance_threshold}）"
+        )
+
+    return args
 
 
 def main() -> None:
@@ -800,6 +844,8 @@ def main() -> None:
             sorted_messages_df,
             max_tokens_per_chunk=DEFAULT_MAX_TOKENS_PER_CHUNK,
             model=args.model,
+            filter_irrelevant=not args.no_filter,
+            relevance_threshold=args.relevance_threshold,
         )
 
         if not chunk_data:
@@ -816,7 +862,7 @@ def main() -> None:
             chunk_text = str(chunk_info["text"])
             session_ids_list = cast(List[str], chunk_info.get("session_ids", []))
             chunk_session_ids.append([str(sid) for sid in session_ids_list])
-            
+
             logger.info("チャンク {}/{} を分析中...", i + 1, len(chunk_data))
             chunk_prompt = build_chunk_analysis_prompt(
                 chunk_index=i,
@@ -864,9 +910,7 @@ def main() -> None:
         suggestions = extract_tagged_section(global_response, "suggestions")
 
         # セッションIDのリストを取得
-        unique_session_ids = sorted(
-            messages_df[SESSION_ID_COL].dropna().astype(str).unique()
-        )
+        unique_session_ids = sorted(messages_df[SESSION_ID_COL].dropna().astype(str).unique())
         logger.info("分析対象のセッション数: {}", len(unique_session_ids))
 
         report = render_report(

@@ -4,6 +4,7 @@
 法制審議会の議事録等の追加資料をファイルシステムから読み込み、
 LLMに提供するための機能を提供する。
 """
+
 from __future__ import annotations
 
 import os
@@ -16,6 +17,7 @@ from intv_comp.logger import logger
 try:
     from pypdf import PdfReader
     from pypdf.errors import PdfReadError
+
     HAS_PDF = True
 except ImportError:
     HAS_PDF = False
@@ -24,6 +26,7 @@ except ImportError:
 try:
     from docx import Document
     from docx.opc.exceptions import PackageNotFoundError as DocxPackageNotFoundError
+
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
@@ -32,6 +35,7 @@ except ImportError:
 try:
     from openpyxl import load_workbook
     from openpyxl.utils.exceptions import InvalidFileException
+
     HAS_XLSX = True
 except ImportError:
     HAS_XLSX = False
@@ -40,6 +44,7 @@ except ImportError:
 try:
     from pptx import Presentation
     from pptx.exc import PackageNotFoundError as PptxPackageNotFoundError
+
     HAS_PPTX = True
 except ImportError:
     HAS_PPTX = False
@@ -49,6 +54,7 @@ try:
     from PIL import Image
     import pytesseract
     from pytesseract.pytesseract import TesseractNotFoundError, TesseractError
+
     # Verify tesseract is actually available
     pytesseract.get_tesseract_version()
     HAS_OCR = True
@@ -177,7 +183,7 @@ def _extract_text_from_image(file_path: Path) -> str:
 
     try:
         with Image.open(str(file_path)) as image:
-            text = pytesseract.image_to_string(image, lang='jpn+eng')
+            text = pytesseract.image_to_string(image, lang="jpn+eng")
             return str(text).strip()
     except TesseractError as exc:
         # OCR 処理中のエラー
