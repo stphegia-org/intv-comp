@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from intv_comp.logger import logger
 
@@ -199,6 +199,9 @@ def load_reference_materials(references_dir: Path) -> str:
 
     Returns:
         読み込んだ全ての資料を結合したテキスト。資料がない場合は空文字列。
+    
+    Note:
+        ファイル名のリストも取得したい場合は load_reference_materials_with_filenames を使用してください。
     """
     if not references_dir.exists():
         logger.info(f"追加資料のディレクトリが存在しません: {references_dir}")
@@ -273,3 +276,90 @@ def load_reference_materials(references_dir: Path) -> str:
     combined_text = "\n\n---\n\n".join(materials)
     logger.info(f"{len(materials)}件の追加資料を読み込みました")
     return combined_text
+
+
+def load_reference_materials_with_filenames(references_dir: Path) -> Tuple[str, List[str]]:
+    """
+    指定されたディレクトリから追加資料を読み込み、結合したテキストとファイル名リストを返す。
+
+    Args:
+        references_dir: 追加資料が格納されているディレクトリのパス
+
+    Returns:
+        (結合したテキスト, ファイル名のリスト) のタプル。資料がない場合は空文字列と空リスト。
+    """
+    if not references_dir.exists():
+        logger.info(f"追加資料のディレクトリが存在しません: {references_dir}")
+        return "", []
+
+    if not references_dir.is_dir():
+        logger.warning(f"指定されたパスはディレクトリではありません: {references_dir}")
+        return "", []
+
+    # 最大ファイルサイズを環境変数から取得（デフォルト: 30MB）
+    try:
+        max_file_size = int(os.getenv("MAX_REFERENCE_FILE_SIZE", "31457280"))
+    except ValueError:
+        logger.warning("MAX_REFERENCE_FILE_SIZE is not a valid integer, using default 30MB")
+        max_file_size = 31457280
+    # サポートされる拡張子と対応する抽出関数
+    file_processors = {
+        ".txt": lambda p: p.read_text(encoding="utf-8"),
+        ".md": lambda p: p.read_text(encoding="utf-8"),
+        ".pdf": _extract_text_from_pdf,
+        ".docx": _extract_text_from_docx,
+        ".xlsx": _extract_text_from_xlsx,
+        ".pptx": _extract_text_from_pptx,
+        ".jpg": _extract_text_from_image,
+        ".jpeg": _extract_text_from_image,
+        ".png": _extract_text_from_image,
+    }
+
+    # ファイルを収集
+    reference_files: List[Path] = []
+    for ext in file_processors:
+        reference_files.extend(references_dir.rglob(f"*{ext}"))
+
+    if not reference_files:
+        logger.info(f"追加資料が見つかりませんでした: {references_dir}")
+        return "", []
+
+    # ファイルを読み込んで結合
+    materials: List[str] = []
+    loaded_filenames: List[str] = []
+    for file_path in sorted(reference_files):
+        try:
+            # ファイルサイズをチェック
+            file_size = file_path.stat().st_size
+            if file_size > max_file_size:
+                logger.warning(
+                    f"ファイルサイズが大きすぎます（{file_size / 1024 / 1024:.1f}MB > "
+                    f"{max_file_size / 1024 / 1024:.1f}MB）: {file_path.name}"
+                )
+                continue
+
+            ext = file_path.suffix.lower()
+            processor = file_processors.get(ext)
+
+            if processor is None:
+                logger.warning(f"未対応のファイル形式です: {file_path.name}")
+                continue
+
+            content = processor(file_path)
+            if content and content.strip():
+                materials.append(f"# {file_path.name}\n\n{content}")
+                loaded_filenames.append(file_path.name)
+                logger.info(f"追加資料を読み込みました: {file_path.name}")
+            else:
+                logger.warning(f"ファイルからテキストを抽出できませんでした: {file_path.name}")
+        except (OSError, PermissionError, UnicodeDecodeError) as exc:
+            logger.warning(f"資料の読み込みに失敗しました: {file_path.name} - {exc}")
+            continue
+
+    if not materials:
+        logger.info("読み込み可能な追加資料がありませんでした")
+        return "", []
+
+    combined_text = "\n\n---\n\n".join(materials)
+    logger.info(f"{len(materials)}件の追加資料を読み込みました")
+    return combined_text, loaded_filenames
