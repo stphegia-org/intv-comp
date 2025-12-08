@@ -17,3 +17,6 @@ logs/
 
 # Generated data files
 data/convert/
+
+# Output files
+output/

@@ -904,16 +904,19 @@ def build_policy_from_messages(
 
     # メッセージをMessageInfoのリストに変換
     messages: List[MessageInfo] = []
-    for _, row in messages_df.iterrows():
-        # メッセージIDを生成（存在しない場合はidカラムを使用、なければインデックスベース）
-        message_id = str(row.get("id", f"msg-{_}"))
+    for idx, row in enumerate(messages_df.itertuples()):
+        # メッセージIDを生成（idカラムがあればそれを使用、なければインデックスベース）
+        if hasattr(row, "id"):
+            message_id = str(row.id)
+        else:
+            message_id = f"msg-{idx:05d}"
 
         msg_info = MessageInfo(
-            session_id=str(row[SESSION_ID_COL]),
+            session_id=str(getattr(row, SESSION_ID_COL)),
             message_id=message_id,
-            timestamp=str(row[TIMESTAMP_COL]),
-            role=str(row[ROLE_COL]),
-            content=str(row[MESSAGE_CONTENT_COL]),
+            timestamp=str(getattr(row, TIMESTAMP_COL)),
+            role=str(getattr(row, ROLE_COL)),
+            content=str(getattr(row, MESSAGE_CONTENT_COL)),
         )
         messages.append(msg_info)
 

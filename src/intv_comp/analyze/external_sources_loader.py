@@ -117,56 +117,66 @@ def parse_external_sources_markdown(content: str) -> ExternalSourcesRepository:
 
     # 文書情報のパース
     # パターン: - **文書ID**: DOC001 の後に続く情報を取得
+    # より柔軟なパターンで、空白の違いに対応
     doc_pattern = re.compile(
-        r"-\s*\*\*文書ID\*\*:\s*(?P<doc_id>\S+).*?"
-        r"-\s*\*\*タイトル\*\*:\s*(?P<title>.+?)(?=\n).*?"
-        r"-\s*\*\*URL\*\*:\s*(?P<url>\S+).*?"
-        r"-\s*\*\*説明\*\*:\s*(?P<description>.+?)(?=\n)",
+        r"-\s*\*\*文書ID\*\*\s*:\s*(?P<doc_id>\S+).*?"
+        r"-\s*\*\*タイトル\*\*\s*:\s*(?P<title>.+?)(?=\n).*?"
+        r"-\s*\*\*URL\*\*\s*:\s*(?P<url>\S+).*?"
+        r"-\s*\*\*説明\*\*\s*:\s*(?P<description>.+?)(?=\n)",
         re.DOTALL | re.MULTILINE,
     )
 
     for match in doc_pattern.finditer(content):
-        doc = ExternalDocument(
-            doc_id=match.group("doc_id").strip(),
-            title=match.group("title").strip(),
-            url=match.group("url").strip(),
-            description=match.group("description").strip(),
-        )
-        repo.add_document(doc)
-        logger.debug(
-            "外部文書を読み込みました: {} ({})",
-            doc.doc_id,
-            doc.title,
-        )
+        try:
+            doc = ExternalDocument(
+                doc_id=match.group("doc_id").strip(),
+                title=match.group("title").strip(),
+                url=match.group("url").strip(),
+                description=match.group("description").strip(),
+            )
+            repo.add_document(doc)
+            logger.debug(
+                "外部文書を読み込みました: {} ({})",
+                doc.doc_id,
+                doc.title,
+            )
+        except (IndexError, AttributeError) as exc:
+            logger.warning("文書情報のパース中にエラーが発生しました: {}", exc)
+            continue
 
     # セッションマッピングのパース
     # パターン: ### セッション: {session_id} の後に続く情報を取得
+    # より柔軟なパターンで、空白の違いに対応
     session_pattern = re.compile(
-        r"###\s*セッション:\s*(?P<session_id>\S+).*?"
-        r"-\s*\*\*関連文書\*\*:\s*(?P<doc_ids>.+?)(?=\n).*?"
-        r"-\s*\*\*説明\*\*:\s*(?P<description>.+?)(?=\n)",
+        r"###\s*セッション\s*:\s*(?P<session_id>\S+).*?"
+        r"-\s*\*\*関連文書\*\*\s*:\s*(?P<doc_ids>.+?)(?=\n).*?"
+        r"-\s*\*\*説明\*\*\s*:\s*(?P<description>.+?)(?=\n)",
         re.DOTALL | re.MULTILINE,
     )
 
     for match in session_pattern.finditer(content):
-        session_id = match.group("session_id").strip()
-        doc_ids_str = match.group("doc_ids").strip()
-        description = match.group("description").strip()
+        try:
+            session_id = match.group("session_id").strip()
+            doc_ids_str = match.group("doc_ids").strip()
+            description = match.group("description").strip()
 
-        # カンマ区切りで文書IDをパース
-        doc_ids = [doc_id.strip() for doc_id in doc_ids_str.split(",")]
+            # カンマ区切りで文書IDをパース（空白を除去）
+            doc_ids = [doc_id.strip() for doc_id in doc_ids_str.split(",") if doc_id.strip()]
 
-        mapping = SessionDocumentMapping(
-            session_id=session_id,
-            related_doc_ids=doc_ids,
-            description=description,
-        )
-        repo.add_session_mapping(mapping)
-        logger.debug(
-            "セッションマッピングを読み込みました: {} -> {}",
-            session_id,
-            ", ".join(doc_ids),
-        )
+            mapping = SessionDocumentMapping(
+                session_id=session_id,
+                related_doc_ids=doc_ids,
+                description=description,
+            )
+            repo.add_session_mapping(mapping)
+            logger.debug(
+                "セッションマッピングを読み込みました: {} -> {}",
+                session_id,
+                ", ".join(doc_ids),
+            )
+        except (IndexError, AttributeError) as exc:
+            logger.warning("セッションマッピングのパース中にエラーが発生しました: {}", exc)
+            continue
 
     logger.info(
         "外部情報参照リストを読み込みました: 文書{}件、セッションマッピング{}件",
