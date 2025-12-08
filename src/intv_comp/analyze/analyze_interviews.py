@@ -11,6 +11,7 @@ import html
 import os
 import random
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Sequence, Set, Tuple, cast
 from urllib.parse import quote
@@ -25,6 +26,10 @@ try:
 except ImportError:
     HAS_TIKTOKEN = False
 
+from intv_comp.analyze.external_sources_loader import (
+    ExternalSourcesRepository,
+    load_external_sources,
+)
 from intv_comp.analyze.llm_client import DEFAULT_MODEL, LLMClient
 from intv_comp.analyze.message_filter import (
     DEFAULT_RELEVANCE_THRESHOLD,
@@ -79,6 +84,42 @@ def _get_env_var_optional(env_var: str, default: str) -> str:
 
 # デフォルトの追加資料ディレクトリ
 DEFAULT_REFERENCES_DIR = Path(_get_env_var_optional("REFERENCES_DIR", "data/references"))
+
+# デフォルトの外部情報参照リストファイル
+DEFAULT_EXTERNAL_SOURCES_FILE = Path(
+    _get_env_var_optional(
+        "EXTERNAL_SOURCES_FILE", "data/references/external_info_reference_template.md"
+    )
+)
+
+
+@dataclass
+class MessageInfo:
+    """メッセージ情報を保持するデータクラス。"""
+
+    session_id: str
+    message_id: str
+    timestamp: str
+    role: str
+    content: str
+
+
+@dataclass
+class PolicyConversation:
+    """政策単位でメッセージを集約するデータクラス。"""
+
+    policy_id: str
+    title: str
+    messages: List[MessageInfo]
+
+    def get_session_ids(self) -> List[str]:
+        """このポリシーに含まれるセッションIDのリストを取得する。
+
+        Returns:
+            セッションIDのリスト（重複なし、ソート済み）
+        """
+        session_ids = {msg.session_id for msg in self.messages}
+        return sorted(list(session_ids))
 
 
 def load_csv(path: Path) -> pd.DataFrame:
@@ -729,6 +770,225 @@ def render_report(
 """
 
 
+def build_policy_analysis_prompt(
+    policy: PolicyConversation,
+    external_sources: ExternalSourcesRepository,
+    reference_materials: str = "",
+) -> str:
+    """政策単位の分析を行うためのユーザープロンプトを生成する。
+
+    Args:
+        policy: 政策会話データ
+        external_sources: 外部情報参照リポジトリ
+        reference_materials: 参考資料（オプション）
+
+    Returns:
+        政策分析用のプロンプト文字列
+    """
+    # メッセージをタイムスタンプ順に整形
+    transcript_lines: List[str] = []
+    for msg in policy.messages:
+        transcript_lines.append(f"[{msg.timestamp}] {msg.role}: {msg.content}")
+    transcript = "\n".join(transcript_lines)
+
+    prompt = f"""
+以下は政策「{policy.title}」（政策ID: {policy.policy_id}）に関する全インタビューログです。
+
+**重要な指示：**
+- 一般論や抽象的な内容は**禁止**です
+- このインタビュー固有の具体的な内容**のみ**を扱ってください
+- 引用は短く（2〜3行以内）にしてください
+- 全ての引用には必ず「セッションID / 発言ID」と「外部公開URL」を付けてください
+
+以下の5部構成でレポートを作成してください：
+
+[executive_summary]
+## 1. Executive Summary（3〜5行）
+インタビュー固有の示唆のみをまとめた短い要約。
+[/executive_summary]
+
+[blind_spots]
+## 2. 触れられていない論点（Blind Spots）
+議論されていないが政策判断上重要となり得る論点。
+[/blind_spots]
+
+[consistency]
+## 3. 回答の一貫性・揺らぎ
+主要概念についての一貫性・矛盾・揺らぎを整理。
+引用は短く（2〜3 行）し、以下のフォーマットで記載：
+
+> 「……引用本文……」
+> 出典：セッションID：[SESSION_ID] / 発言ID：[MESSAGE_ID]
+> 出典元リンク：[EXTERNAL_URL]
+[/consistency]
+
+[implications]
+## 4. 回答が示す意味の整理（Implication Clarity）
+回答内容が示す前提・方向性を明確化し、判断材料を高解像度で提示する。
+[/implications]
+
+[main_quotes]
+## 5. 主要原文引用
+本文に載せきれないが重要な引用を掲載（すべて ID＋外部リンク付き）。
+[/main_quotes]
+
+---
+## インタビューログ
+
+{transcript}
+"""
+
+    if reference_materials:
+        ref_tokens = _estimate_token_count(reference_materials)
+        if ref_tokens <= 10000:
+            prompt += f"""
+---
+## 参考資料
+
+以下の追加資料も分析の参考にしてください：
+
+{reference_materials}
+"""
+
+    return prompt
+
+
+def format_citation_with_external_link(
+    text: str,
+    session_id: str,
+    message_id: str,
+    external_sources: ExternalSourcesRepository,
+) -> str:
+    """引用テキストに外部リンクを付与する。
+
+    Args:
+        text: 引用テキスト
+        session_id: セッションID
+        message_id: メッセージID
+        external_sources: 外部情報参照リポジトリ
+
+    Returns:
+        外部リンク付きの引用フォーマット
+    """
+    external_url = external_sources.get_primary_url_for_session(session_id)
+    if not external_url:
+        # 外部URLが見つからない場合はデフォルトのリンクを使用
+        external_url = "https://depth-interview-ai.vercel.app/report/" + quote(session_id, safe="")
+
+    return f"""> 「{text}」
+> 出典：セッションID：{session_id} / 発言ID：{message_id}
+> 出典元リンク：{external_url}"""
+
+
+def build_policy_from_messages(
+    messages_df: pd.DataFrame,
+    sessions_df: pd.DataFrame,
+    policy_id: str = "POLICY001",
+) -> PolicyConversation:
+    """メッセージDataFrameから政策会話データを構築する。
+
+    Args:
+        messages_df: メッセージDataFrame
+        sessions_df: セッションDataFrame
+        policy_id: 政策ID
+
+    Returns:
+        政策会話データ
+    """
+    # セッション情報から政策タイトルを取得（最初のセッションのconfig_titleを使用）
+    title = "船荷証券の電子化法案に関するインタビュー"
+    if "config_title" in sessions_df.columns and len(sessions_df) > 0:
+        first_title = sessions_df.iloc[0]["config_title"]
+        if pd.notna(first_title):
+            title = str(first_title)
+
+    # メッセージをMessageInfoのリストに変換
+    messages: List[MessageInfo] = []
+    for idx, row in enumerate(messages_df.itertuples()):
+        # メッセージIDを生成（idカラムがあればそれを使用、なければインデックスベース）
+        if hasattr(row, "id"):
+            message_id = str(row.id)
+        else:
+            message_id = f"msg-{idx:05d}"
+
+        msg_info = MessageInfo(
+            session_id=str(getattr(row, SESSION_ID_COL)),
+            message_id=message_id,
+            timestamp=str(getattr(row, TIMESTAMP_COL)),
+            role=str(getattr(row, ROLE_COL)),
+            content=str(getattr(row, MESSAGE_CONTENT_COL)),
+        )
+        messages.append(msg_info)
+
+    return PolicyConversation(
+        policy_id=policy_id,
+        title=title,
+        messages=messages,
+    )
+
+
+def render_policy_report(
+    policy: PolicyConversation,
+    llm_client: LLMClient,
+    external_sources: ExternalSourcesRepository,
+    reference_materials: str = "",
+) -> str:
+    """仕様どおりのMarkdownレポート（政策1本分）を生成する。
+
+    Args:
+        policy: 政策会話データ
+        llm_client: LLMクライアント
+        external_sources: 外部情報参照リポジトリ
+        reference_materials: 参考資料（オプション）
+
+    Returns:
+        政策レポートのMarkdown文字列
+    """
+    logger.info("政策「{}」のレポートを生成中...", policy.title)
+
+    # プロンプトを生成
+    prompt = build_policy_analysis_prompt(policy, external_sources, reference_materials)
+
+    # LLMに分析を依頼
+    response = llm_client.chat_completion(
+        system_prompt=(
+            "あなたは政策立案者向けにインタビュー分析を行う専門家です。"
+            "一般論は禁止です。このインタビュー固有の具体的な内容のみを扱ってください。"
+            "全ての引用には必ず外部公開URLを付けてください。"
+        ),
+        user_prompt=prompt,
+    )
+
+    # 各セクションを抽出
+    executive_summary = extract_tagged_section(response, "executive_summary")
+    blind_spots = extract_tagged_section(response, "blind_spots")
+    consistency = extract_tagged_section(response, "consistency")
+    implications = extract_tagged_section(response, "implications")
+    main_quotes = extract_tagged_section(response, "main_quotes")
+
+    # レポートを組み立て
+    report = f"""# 政策名（{policy.policy_id}）：{policy.title}
+
+## 1. Executive Summary（3〜5行）
+{executive_summary}
+
+## 2. 触れられていない論点（Blind Spots）
+{blind_spots}
+
+## 3. 回答の一貫性・揺らぎ
+{consistency}
+
+## 4. 回答が示す意味の整理（Implication Clarity）
+{implications}
+
+## 5. 主要原文引用
+{main_quotes}
+"""
+
+    logger.info("政策「{}」のレポート生成完了", policy.title)
+    return report
+
+
 def parse_arguments() -> argparse.Namespace:
     """コマンドライン引数を解析する。"""
     parser = argparse.ArgumentParser(
@@ -786,6 +1046,17 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_RELEVANCE_THRESHOLD,
         help=f"メッセージフィルタリングの閾値（0.0～1.0、デフォルト: {DEFAULT_RELEVANCE_THRESHOLD}）",
     )
+    parser.add_argument(
+        "--external-sources-file",
+        type=Path,
+        default=DEFAULT_EXTERNAL_SOURCES_FILE,
+        help="外部情報参照リストファイルのパス",
+    )
+    parser.add_argument(
+        "--policy-mode",
+        action="store_true",
+        help="政策単位でレポートを生成するモード（新仕様）",
+    )
 
     args = parser.parse_args()
 
@@ -810,8 +1081,7 @@ def main() -> None:
             logger.warning("絶対パスが指定されました。相対パスの使用を推奨します。")
 
         messages_df = load_csv(args.messages_file)
-        # セッション情報は将来的にフィルタ条件などに使用する可能性があるため読み込む
-        # _sessions_df = load_csv(args.sessions_file)
+        sessions_df = load_csv(args.sessions_file)
 
         validate_required_columns(
             messages_df,
@@ -824,6 +1094,9 @@ def main() -> None:
             args.references_dir
         )
 
+        # 外部情報参照リストを読み込む
+        external_sources = load_external_sources(args.external_sources_file)
+
         # トークン使用量の警告
         if reference_materials:
             estimated_tokens = _estimate_token_count(reference_materials, args.model)
@@ -833,6 +1106,35 @@ def main() -> None:
                     estimated_tokens,
                 )
 
+        # 政策モードの場合は新仕様でレポートを生成
+        if args.policy_mode:
+            logger.info("政策モードでレポートを生成します")
+
+            # メッセージを政策単位に集約
+            policy = build_policy_from_messages(
+                messages_df=messages_df,
+                sessions_df=sessions_df,
+                policy_id="POLICY001",
+            )
+
+            # LLMクライアントを初期化
+            llm = LLMClient(model=args.model)
+
+            # 政策レポートを生成
+            report = render_policy_report(
+                policy=policy,
+                llm_client=llm,
+                external_sources=external_sources,
+                reference_materials=reference_materials,
+            )
+
+            # レポートを出力
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(report, encoding="utf-8")
+            logger.info("政策レポートを出力しました: {}", args.output)
+            return
+
+        # 既存の処理（チャンク分析モード）
         # 全メッセージを時間順に並べる
         logger.info("全メッセージを時間順に並べています...")
         sorted_messages_df = build_global_transcript_df(messages_df)
